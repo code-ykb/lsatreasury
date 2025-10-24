@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Reports</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="reportsPage">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Reports</div>
+    <div style="margin-left:auto; font-size:14px;">
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice-dollar"></i> Transactions</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
+        <a class="navlink" href="reports.html"><i class="fa-solid fa-chart-line"></i> Reports</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Reports</h2>
+
+      <!-- Global report controls -->
+      <div class="card" style="margin-bottom:14px;">
+        <form id="reportForm">
+          <div class="grid2">
+            <div class="form-row">
+              <label for="rFrom">From</label>
+              <input id="rFrom" type="date"/>
+            </div>
+            <div class="form-row">
+              <label for="rTo">To</label>
+              <input id="rTo" type="date"/>
+            </div>
+            <div class="form-row">
+              <label>Calendar</label>
+              <div>
+                <label style="margin-right:10px;"><input type="radio" name="cal" value="greg" checked/> Gregorian</label>
+                <label><input type="radio" name="cal" value="badi"/> Bahá’í (Badíʿ)</label>
+                <div style="font-size:12px;color:#6b7280; margin-top:6px;">
+                  Bahá’í months use Naw-Rúz as year start. (Prototype uses Mar 21 anchor; we can refine to astronomical if needed.)
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>&nbsp;</label>
+              <label><input id="rMonthly" type="checkbox" checked/> Month-to-Month breakdown</label>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="btn-primary" type="submit"><i class="fa-solid fa-play"></i> Run</button>
+            <button class="btn-secondary" id="rExport" type="button"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+            <button class="btn-secondary" id="rPrint" type="button"><i class="fa-solid fa-print"></i> Print</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs" style="display:flex; gap:6px; margin-bottom:12px;">
+        <button id="tabTB" class="btn-secondary">Trial Balance</button>
+        <button id="tabCF" class="btn-secondary">Cash Flow</button>
+        <button id="tabIS" class="btn-secondary">Income Statement</button>
+        <button id="tabBS" class="btn-secondary">Balance Sheet</button>
+      </div>
+
+      <!-- Trial Balance -->
+      <section id="tbSection" class="card">
+        <h3 style="margin-top:0;">Trial Balance</h3>
+        <div id="tbMeta" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
+        <div id="tbContainer"><!-- tables injected here --></div>
+      </section>
+
+      <!-- Cash Flow -->
+      <section id="cfSection" class="card" style="display:none;">
+        <h3 style="margin-top:0;">Cash Flow</h3>
+        <div id="cfMeta" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
+        <div id="cfContainer"><!-- cash flow table injects here --></div>
+      </section>
+
+      <!-- Income Statement -->
+      <section id="isSection" class="card" style="display:none;">
+        <h3 style="margin-top:0;">Income Statement</h3>
+
+        <!-- NEW: View selector -->
+        <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px;">
+          <label style="font-size:14px;">
+            View:
+            <select id="isView" style="margin-left:4px;">
+              <option value="perfund" selected>Per-Fund</option>
+              <option value="consolidated">Consolidated</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="isMeta" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
+        <div id="isContainer"><!-- income statement table injects here --></div>
+      </section>
+
+      <!-- Balance Sheet -->
+      <section id="bsSection" class="card" style="display:none;">
+        <h3 style="margin-top:0;">Balance Sheet</h3>
+        <div id="bsMeta" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
+        <div id="bsContainer"><!-- balance sheet table injects here --></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

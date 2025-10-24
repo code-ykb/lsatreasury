@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Dashboard</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="dashboardPage">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Dashboard</div>
+    <div style="margin-left:auto; font-size:14px; display:flex; align-items:center; gap:10px;">
+      <span style="padding:4px 8px; border:1px solid #e5e7eb; border-radius:6px; background:#f9fafb; font-weight:600;">
+        Currency: MUR (Rs)
+      </span>
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <!-- Shell: sidebar + main -->
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice"></i> Transactions</a>
+        <a class="navlink" href="reports.html"><i class="fa-solid fa-chart-line"></i> Reports</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Welcome</h2>
+      <p>This is your command center.</p>
+
+      <div class="tiles">
+        <div class="tile">
+          <h4>Total Believers</h4>
+          <div id="dashBelievers" class="big">0</div>
+        </div>
+        <div class="tile">
+          <h4>Funds</h4>
+          <div id="dashFunds" class="big">0</div>
+        </div>
+<div class="tile">
+  <h4>Month Receipts (Rs)</h4>
+  <div class="big" id="dashReceipts">0.00</div>
+</div>
+<div class="tile">
+  <h4>Month Payments (Rs)</h4>
+  <div class="big" id="dashPayments">0.00</div>
+</div>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

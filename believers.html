@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Believers</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="believersPage">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Believers (CIF)</div>
+    <div style="margin-left:auto; font-size:14px; display:flex; align-items:center; gap:10px;">
+      <span style="padding:4px 8px; border:1px solid #e5e7eb; border-radius:6px; background:#f9fafb; font-weight:600;">
+        Currency: MUR (Rs)
+      </span>
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <!-- Shell: sidebar + main -->
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <!-- Neutral invoice icon (no dollar) -->
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice"></i> Transactions</a>
+        <a class="navlink" href="reports.html"><i class="fa-solid fa-chart-line"></i> Reports</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Believers Registry</h2>
+      <p>Create and manage believers (unique ID will be generated automatically).</p>
+
+      <!-- Create / Edit form -->
+      <div class="card" style="margin-bottom:16px;">
+        <form id="believerForm">
+          <div class="grid2">
+            <div class="form-row">
+              <label>Believer ID (auto)</label>
+              <input id="bId" type="text" readonly placeholder="Auto-generated on Save"/>
+            </div>
+            <div class="form-row">
+              <label>Full Name</label>
+              <input id="bName" type="text" placeholder="e.g. John A. Doe"/>
+            </div>
+            <div class="form-row">
+              <label>Phone</label>
+              <input id="bPhone" type="text" placeholder="+230 5xx xx xx"/>
+            </div>
+            <div class="form-row">
+              <label>Email</label>
+              <input id="bEmail" type="email" placeholder="name@example.com"/>
+            </div>
+            <div class="form-row" style="grid-column:1 / -1;">
+              <label>Address</label>
+              <input id="bAddress" type="text" placeholder="Street, Locality"/>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button class="btn-primary" type="submit">Save</button>
+            <button class="btn-secondary" id="resetFormBtn" type="button">Clear</button>
+          </div>
+          <input type="hidden" id="editIndex" value=""/>
+        </form>
+      </div>
+
+      <!-- Search + List -->
+      <div class="card">
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+          <input id="searchBox" type="text" placeholder="Search by name, phone, email" style="flex:1;height:40px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;">
+          <button class="btn-secondary" id="exportBtn" type="button" title="Download CSV"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table" id="believersTable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Full Name</th>
+                <th>Phone</th>
+                <th>Email</th>
+                <th>Address</th>
+                <th style="width:120px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody><!-- rows injected by JS --></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

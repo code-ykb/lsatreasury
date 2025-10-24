@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Funds</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="fundsPage">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Funds & Chart of Accounts</div>
+    <div style="margin-left:auto; font-size:14px; display:flex; align-items:center; gap:10px;">
+      <span style="padding:4px 8px; border:1px solid #e5e7eb; border-radius:6px; background:#f9fafb; font-weight:600;">
+        Currency: MUR (Rs)
+      </span>
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <!-- Correct link and neutral icon -->
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice"></i> Transactions</a>
+        <a class="navlink" href="reports.html"><i class="fa-solid fa-chart-line"></i> Reports</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Funds</h2>
+      <p>Add or manage Funds. Adding a Fund automatically creates its related accounts in the Chart of Accounts.</p>
+
+      <!-- Add Fund -->
+      <div class="card" style="margin-bottom:16px;">
+        <form id="fundForm" class="grid2">
+          <div class="form-row">
+            <label for="fundName">Fund Name</label>
+            <input id="fundName" type="text" placeholder="e.g. Building Fund"/>
+          </div>
+          <div class="form-row">
+            <label for="fundCode">Short Code (auto if blank)</label>
+            <input id="fundCode" type="text" placeholder="e.g. BLD"/>
+          </div>
+          <div style="grid-column:1 / -1;">
+            <button class="btn-primary" type="submit">Add Fund</button>
+            <button class="btn-secondary" id="seedBtn" type="button" title="Re-seed default funds if missing">Seed Defaults</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Funds list -->
+      <div class="card">
+        <div class="table-wrap">
+          <table class="table" id="fundsTable">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Fund Name</th>
+                <th>Equity Acct</th>
+                <th>Income Acct</th>
+                <th>Expense Acct</th>
+                <th style="width:120px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody><!-- rows injected by JS --></tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3 style="margin-top:18px;">Chart of Accounts (preview)</h3>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="table" id="coaTable">
+            <thead>
+              <tr>
+                <th>Code</th><th>Account Name</th><th>Type</th>
+              </tr>
+            </thead>
+            <tbody><!-- rows injected by JS --></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

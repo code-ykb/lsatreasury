@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LSA Treasury System | Login</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Internet Banking</div>
+  </div>
+
+  <!-- Notice banner -->
+  <div class="notice">
+    <div class="dot">i</div>
+    <div>
+      Please note that migration to the new LSA Treasury portal will occur in phases. 
+      Users will be invited when their account is ready.
+    </div>
+  </div>
+
+  <!-- Two-column main area -->
+  <div class="section">
+    <!-- Left: Login -->
+    <div class="card">
+      <h3>Login</h3>
+      <form id="loginForm">
+        <div class="form-row">
+          <label for="username">User ID</label>
+          <input id="username" type="text" autocomplete="username" />
+        </div>
+        <div class="form-row">
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" />
+        </div>
+        <button class="btn-primary" type="submit">LOGIN</button>
+        <div class="help-links">
+  <a href="#" id="lnkForgot">Forgot Password?</a>
+  &nbsp; | &nbsp;
+  <a href="#">Can't Login?</a> &nbsp; (Account Locked)
+</div>
+      </form>
+    </div>
+
+    <!-- Right: Information / announcement -->
+    <div class="card promo">
+      <div class="hero">LSA Treasury Pro & New SmartApprove (coming soon)</div>
+      <p>A secure experience for LSA St Pierre officers.</p>
+      <p class="cta"><a href="#">Read the onboarding guide →</a></p>
+      <p>Please complete registration once you have been notified.</p>
+    </div>
+  </div>
+
+  <!-- Security strip -->
+  <div class="security">
+    <div class="shield"></div>
+    <h3>Security</h3>
+    <p>Use strong passwords. Do not share credentials. Log out after each session.</p>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

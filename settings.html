@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Settings</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="settingsPage">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Settings</div>
+    <div style="margin-left:auto; font-size:14px;">
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice-dollar"></i> Transactions</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Settings</h2>
+
+      <div class="card" style="border-color:#dc2626">
+        <h3 style="margin-top:0">Danger Zone</h3>
+        <p style="color:#6b7280">Delete data stored in your browser for this app. This cannot be undone.</p>
+
+        <div style="display:grid; gap:10px; max-width:620px;">
+          <button id="btnWipeJournal" class="btn-secondary" style="border-color:#dc2626">
+            <i class="fa-solid fa-broom"></i> Delete Journal entries only
+          </button>
+
+          <button id="btnWipeContribLedger" class="btn-secondary" style="border-color:#dc2626">
+            <i class="fa-solid fa-broom"></i> Delete Contribution Ledger (statements) only
+          </button>
+
+          <button id="btnWipeCashflow" class="btn-secondary" style="border-color:#dc2626">
+            <i class="fa-solid fa-broom"></i> Delete Cash Flow only
+          </button>
+
+          <button id="btnFactoryReset" class="btn-primary" style="background:#dc2626">
+            <i class="fa-solid fa-triangle-exclamation"></i> Factory Reset (clear Journal, Statements, Cash Flow)
+          </button>
+
+          <button id="btnNuclearReset" class="btn-primary" style="background:#7f1d1d">
+            <i class="fa-solid fa-skull-crossbones"></i> Nuclear Reset (clear EVERYTHING incl. Funds, COA, Believers)
+          </button>
+        </div>
+      </div>
+      <!-- Users (Admin) -->
+<section class="card" id="usersSection">
+  <h3 style="margin-top:0;">Users</h3>
+  <div class="grid2">
+    <div class="form-row">
+      <label>Full Name</label>
+      <input id="uName" type="text" placeholder="e.g. John Doe" />
+    </div>
+    <div class="form-row">
+      <label>Email</label>
+      <input id="uEmail" type="email" placeholder="name@example.com" />
+    </div>
+    <div class="form-row">
+      <label>Role</label>
+      <select id="uRole">
+        <option value="ADMIN">Admin — Treasurer/Vice Treasurer</option>
+        <option value="LSA_MEMBER">LSA Member</option>
+        <option value="BELIEVER">Believer</option>
+      </select>
+    </div>
+    <div class="form-row" id="uBelieverRow" style="display:none;">
+      <label>Believer ID (link to statement)</label>
+      <input id="uBelieverId" type="text" placeholder="If role=Believer" />
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; margin-top:8px;">
+    <button class="btn-primary" id="btnCreateUser"><i class="fa-solid fa-user-plus"></i> Create User</button>
+    <button class="btn-secondary" id="btnResetLink"><i class="fa-solid fa-key"></i> Send Reset Link</button>
+  </div>
+
+  <div style="margin-top:14px;">
+    <h4 style="margin:0 0 6px 0;">Existing Users</h4>
+    <div class="table-wrap">
+      <table class="table" id="usersTable">
+        <thead>
+          <tr><th>Name</th><th>Email</th><th>Role</th><th>BelieverID</th><th>Must Change PW</th><th>Actions</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

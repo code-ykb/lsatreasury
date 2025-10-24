@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Adjustments & Opening Balances</title>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="adjustmentsPage">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Adjustments & Opening Balances</div>
+    <div style="margin-left:auto; font-size:14px;">
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice-dollar"></i> Transactions</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Adjustments & Opening Balances</h2>
+      <p>Use this module to post Opening Balances (OB) and Adjustment Journals (ADJ). These write proper double-entry lines into the Journal. Cash Flow is not impacted by OB.</p>
+
+      <!-- Tabs -->
+      <div class="tabs" style="display:flex; gap:6px; margin-bottom:12px;">
+        <button id="tabOB" class="btn-secondary">Opening Balances</button>
+        <button id="tabADJ" class="btn-secondary">Adjustments</button>
+      </div>
+
+      <!-- Opening Balances -->
+      <section id="obSection" class="card">
+        <h3 style="margin-top:0;">Opening Balances (OB)</h3>
+
+        <div class="grid2">
+          <div class="form-row">
+            <label for="obDate">OB Date</label>
+            <input id="obDate" type="date"/>
+          </div>
+          <div class="form-row">
+            <label for="obPreset">Preset</label>
+            <select id="obPreset">
+              <option value="FUND_BANK">Fund Bank Balance → Equity (Fund)</option>
+              <option value="CASH_ON_HAND">Cash on Hand → Equity (General)</option>
+              <option value="OPER_BANK">Operating Bank (1000) → Equity (General)</option>
+              <option value="SPECIAL_HELD">Special Held (2300) offset (custom debit)</option>
+              <option value="EXTERNAL_PAY">External Payable (2400) offset (custom debit)</option>
+              <option value="CUSTOM">Custom OB (pick any debit & credit)</option>
+            </select>
+          </div>
+
+          <div class="form-row" id="obFundRow">
+            <label for="obFund">Fund (for Fund Bank preset)</label>
+            <select id="obFund"></select>
+          </div>
+
+          <div class="form-row" id="obCustomDebitRow" style="display:none;">
+            <label for="obDebit">Debit Account</label>
+            <select id="obDebit"></select>
+          </div>
+          <div class="form-row" id="obCustomCreditRow" style="display:none;">
+            <label for="obCredit">Credit Account</label>
+            <select id="obCredit"></select>
+          </div>
+
+          <div class="form-row">
+            <label for="obAmount">Amount (Rs)</label>
+            <input id="obAmount" type="number" step="0.01" min="0"/>
+          </div>
+          <div class="form-row" style="grid-column:1/-1;">
+            <label for="obNarr">Narration</label>
+            <input id="obNarr" type="text" placeholder="e.g. OB as at 2025-01-01"/>
+          </div>
+        </div>
+
+        <div style="margin-top:10px; display:flex; gap:8px;">
+          <button id="obPost" class="btn-primary"><i class="fa-solid fa-circle-plus"></i> Post OB</button>
+          <button id="obClear" class="btn-secondary">Clear</button>
+        </div>
+
+        <h4 style="margin-top:18px;">Recent OB Entries</h4>
+        <div class="table-wrap">
+          <table class="table" id="obTable">
+            <thead>
+              <tr>
+                <th>Date</th><th>Description</th><th>Debit</th><th>Credit</th><th style="text-align:right;">Amount (Rs)</th><th>Action</th>
+              </tr>
+            </thead>
+            <tbody><!-- filled by JS --></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Adjustments -->
+      <section id="adjSection" class="card" style="display:none;">
+        <h3 style="margin-top:0;">Adjustments (ADJ)</h3>
+
+        <div class="grid2">
+          <div class="form-row">
+            <label for="adjDate">Date</label>
+            <input id="adjDate" type="date"/>
+          </div>
+          <div class="form-row">
+            <label for="adjFund">Fund (optional)</label>
+            <select id="adjFund"></select>
+          </div>
+          <div class="form-row">
+            <label for="adjDebit">Debit Account</label>
+            <select id="adjDebit"></select>
+          </div>
+          <div class="form-row">
+            <label for="adjCredit">Credit Account</label>
+            <select id="adjCredit"></select>
+          </div>
+          <div class="form-row">
+            <label for="adjAmount">Amount (Rs)</label>
+            <input id="adjAmount" type="number" step="0.01" min="0"/>
+          </div>
+          <div class="form-row" style="grid-column:1/-1;">
+            <label for="adjNarr">Narration</label>
+            <input id="adjNarr" type="text" placeholder="e.g. Reclassify expense / Correct prior entry"/>
+          </div>
+        </div>
+
+        <div style="margin-top:10px; display:flex; gap:8px;">
+          <button id="adjPost" class="btn-primary"><i class="fa-solid fa-circle-plus"></i> Post Adjustment</button>
+          <button id="adjClear" class="btn-secondary">Clear</button>
+        </div>
+
+        <h4 style="margin-top:18px;">Recent Adjustments</h4>
+        <div class="table-wrap">
+          <table class="table" id="adjTable">
+            <thead>
+              <tr>
+                <th>Date</th><th>Fund</th><th>Description</th><th>Debit</th><th>Credit</th><th style="text-align:right;">Amount (Rs)</th><th>Action</th>
+              </tr>
+            </thead>
+            <tbody><!-- filled by JS --></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
