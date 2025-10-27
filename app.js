@@ -64,6 +64,29 @@ const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag
   cf.push(entry);
   saveCashflow(cf);
 };
+const removeCashflowByTag = (tag) => {
+  if (!tag) return;
+  const filtered = loadCashflow().filter((row) => row._tag !== tag);
+  saveCashflow(filtered);
+};
+
+const loadCashflow = () => loadJSON(CASHFLOW_KEY);
+const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
+const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
+  const cf = loadCashflow();
+  const entry = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fund ?? null,
+    note: note || "",
+  };
+  if (_tag) entry._tag = _tag;
+  if (_src) entry._src = _src;
+  cf.push(entry);
+  saveCashflow(cf);
+};
 const postCashflowWithTag = (entry, tag, source) => {
   if (!entry) return;
   postCashflow({ ...entry, _tag: tag || null, _src: source || null });
@@ -138,6 +161,84 @@ const findUserByEmail = (email) =>
   loadUsers().find(
     (u) => (u.email || "").toLowerCase() === (email || "").toLowerCase()
   );
+
+const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
+const SUPER_ADMIN_NAME = "Super Admin";
+const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
+const SUPER_ADMIN_PASSWORD_HASH = "-1458677651"; // hash("SuperAdmin!2024")
+const ROLE_LABELS = {
+  [SUPER_ADMIN_ROLE]: "Super Admin",
+  "ADMIN": "Admin",
+  "LSA_MEMBER": "LSA Member",
+  "BELIEVER": "Believer",
+};
+const formatRole = (role) => ROLE_LABELS[role] || role || "";
+
+function ensureSuperAdminAccount() {
+  const users = loadUsers();
+  let idx = users.findIndex(
+    (u) => (u.email || "").toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
+  );
+
+  if (idx === -1) {
+    idx = users.findIndex((u) => u.builtIn && u.role === SUPER_ADMIN_ROLE);
+  }
+
+  if (idx === -1) {
+    users.push({
+      id: uuid(),
+      name: SUPER_ADMIN_NAME,
+      email: SUPER_ADMIN_EMAIL,
+      role: SUPER_ADMIN_ROLE,
+      believerId: "",
+      pwHash: SUPER_ADMIN_PASSWORD_HASH,
+      mustChangePW: false,
+      createdAt: new Date().toISOString(),
+      builtIn: true,
+    });
+    saveUsers(users);
+    return;
+  }
+
+  const current = users[idx];
+  let mutated = false;
+
+  if (current.role !== SUPER_ADMIN_ROLE) {
+    current.role = SUPER_ADMIN_ROLE;
+    mutated = true;
+  }
+  if ((current.email || "").toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
+    current.email = SUPER_ADMIN_EMAIL;
+    mutated = true;
+  }
+  if (current.pwHash !== SUPER_ADMIN_PASSWORD_HASH) {
+    current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
+    mutated = true;
+  }
+  if (current.builtIn !== true) {
+    current.builtIn = true;
+    mutated = true;
+  }
+  if (!current.name) {
+    current.name = SUPER_ADMIN_NAME;
+    mutated = true;
+  }
+  if (current.mustChangePW) {
+    current.mustChangePW = false;
+    mutated = true;
+  }
+
+  if (mutated) saveUsers(users);
+}
+
+ensureSuperAdminAccount();
+
+if (typeof window !== "undefined") {
+  window.__lsaAuth = Object.assign({}, window.__lsaAuth, {
+    ensureSuperAdminAccount,
+    formatRole,
+  });
+}
 
 const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
 const SUPER_ADMIN_NAME = "Super Admin";
@@ -496,209 +597,6 @@ if (typeof window !== "undefined") {
     syncTaggedArtifacts,
   });
 }
-
-const CASH_CODE_PREFIXES = ["10", "11"];
-const isCashLikeAccount = (code) => {
-  if (!code) return false;
-  if (code === "1000" || code === "1010") return true;
-  const acct = acctByCode(code);
-  if (!acct) return false;
-  if (acct.type !== ACCT_TYPES.ASSET) return false;
-  if (CASH_CODE_PREFIXES.some((p) => (acct.code || "").startsWith(p))) return true;
-  const name = (acct.name || "").toLowerCase();
-  return name.includes("cash") || name.includes("bank");
-};
-const fundFromAccount = (code) => {
-  const acct = acctByCode(code);
-  if (!acct) return null;
-  const fund = typeof acct.fund === "string" ? acct.fund.trim() : "";
-  return fund || null;
-};
-const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
-  const hint = typeof fundHint === "string" ? fundHint.trim() : "";
-  if (hint) return hint;
-
-  const debitFund = fundFromAccount(debitCode);
-  const creditFund = fundFromAccount(creditCode);
-  if (debitFund && creditFund) {
-    if (debitFund === creditFund) return debitFund;
-    return debitFund || creditFund;
-  }
-  if (debitFund) return debitFund;
-  if (creditFund) return creditFund;
-
-  const funds = loadJSON(FUNDS_KEY, []);
-  const general = funds.find((f) => f.code === "GEN");
-  const normalizeCode = (code) => (code === null || code === undefined ? "" : String(code).trim());
-  const isGeneralCash = (code) => {
-    const c = normalizeCode(code);
-    return c === "1000" || c === "1010";
-  };
-
-  if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) {
-    return general.code;
-  }
-
-  return "";
-};
-const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note = "" }) => {
-  const debitCode = debit === null || debit === undefined ? "" : String(debit).trim();
-  const creditCode = credit === null || credit === undefined ? "" : String(credit).trim();
-  if (!debitCode || !creditCode) return null;
-
-  const amt = Number(amount);
-  if (!Number.isFinite(amt) || amt === 0) return null;
-
-  const label = (desc === null || desc === undefined ? "" : String(desc)).trim() || "Cash movement";
-  const cleanNote = (note === null || note === undefined ? "" : String(note)).trim() || label;
-  const debitIsCash = isCashLikeAccount(debitCode);
-  const creditIsCash = isCashLikeAccount(creditCode);
-  if (debitIsCash === creditIsCash) return null;
-
-  const cashCode = debitIsCash ? debitCode : creditCode;
-  const cfFund = (typeof fund === "string" ? fund.trim() : "") || fundFromAccount(cashCode) || null;
-
-  return {
-    date,
-    type: debitIsCash ? "receipt" : "outgoing",
-    bucket: label,
-    amount: amt,
-    fund: cfFund,
-    note: cleanNote,
-  };
-};
-
-const syncTaggedArtifacts = (row, source) => {
-  if (!row || row.id === null || row.id === undefined) return row;
-
-  const tag = String(row.id).trim();
-  if (!tag) return row;
-
-  const dateISO = row.date === null || row.date === undefined ? "" : String(row.date).trim();
-  const debit = row.debit === null || row.debit === undefined ? "" : String(row.debit).trim();
-  const credit = row.credit === null || row.credit === undefined ? "" : String(row.credit).trim();
-  const rawAmount = Number(row.amount);
-  const hasAmount = Number.isFinite(rawAmount) && rawAmount !== 0;
-  const amount = hasAmount ? rawAmount : 0;
-  const baseDesc = row.desc ?? row.narr ?? `${source} entry`;
-  const desc = (baseDesc === null || baseDesc === undefined ? `${source} entry` : String(baseDesc)).trim() || `${source} entry`;
-  const baseNote = row.note ?? row.narr ?? row.desc ?? desc;
-  const note = (baseNote === null || baseNote === undefined ? desc : String(baseNote)).trim() || desc;
-  const fundHint = typeof row.fund === "string" ? row.fund.trim() : "";
-
-  const valid = !!dateISO && !!debit && !!credit && hasAmount;
-  const derivedFund = valid ? deriveFundForEntry(fundHint, debit, credit) : fundHint;
-  const normalized = {
-    ...row,
-    id: tag,
-    date: dateISO,
-    desc,
-    note,
-    debit,
-    credit,
-    amount,
-    fund: derivedFund || "",
-  };
-
-  const pruneByTag = (entries) => entries.filter((entry) => entry && entry._tag !== tag);
-
-  let journal = loadJSON(JOURNAL_KEY, []);
-  const originalJournalLen = journal.length;
-  journal = pruneByTag(journal);
-  if (valid) {
-    journal.push({
-      date: dateISO,
-      fund: derivedFund || "",
-      desc,
-      debit,
-      credit,
-      amount,
-      _tag: tag,
-      _src: source,
-    });
-  }
-  if (journal.length !== originalJournalLen || valid) {
-    saveJSON(JOURNAL_KEY, journal);
-  }
-
-  let cashflow = loadCashflow();
-  const originalCashflowLen = cashflow.length;
-  cashflow = pruneByTag(cashflow);
-  if (valid) {
-    const cfEntry = buildCashflowEntry({
-      date: dateISO,
-      debit,
-      credit,
-      amount,
-      desc,
-      fund: derivedFund || "",
-      note,
-    });
-    if (cfEntry) cashflow.push({ ...cfEntry, _tag: tag, _src: source });
-  }
-  if (cashflow.length !== originalCashflowLen || valid) {
-    saveCashflow(cashflow);
-  }
-
-  return normalized;
-};
-
-const syncTaggedEntryCollections = () => {
-  ensureSeedDataStrict();
-  const process = (storageKey, source) => {
-    const rows = loadJSON(storageKey, []);
-    if (!Array.isArray(rows) || rows.length === 0) return;
-
-    let mutated = false;
-    const normalized = rows.map((row) => {
-      const copy = { ...row };
-      const result = syncTaggedArtifacts(copy, source);
-      const fieldsToCheck = ["date", "desc", "debit", "credit", "amount", "fund", "note"];
-      if (
-        !mutated &&
-        fieldsToCheck.some((field) => (row?.[field] ?? "") !== (result?.[field] ?? ""))
-      ) {
-        mutated = true;
-      }
-      return result;
-    });
-
-    if (mutated) saveJSON(storageKey, normalized);
-  };
-
-  try {
-    process("lsa_ob", "OB");
-    process("lsa_adj", "ADJ");
-  } catch (err) {
-    console.error("Failed to sync tagged entries", err);
-  }
-};
-
-syncTaggedEntryCollections();
-
-if (typeof window !== "undefined") {
-  window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
-    syncTaggedEntryCollections,
-    syncTaggedArtifacts,
-  });
-}
-  return acct && acct.fund ? acct.fund : null;
-};
-const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note = "" }) => {
-  const debitIsCash = isCashLikeAccount(debit);
-  const creditIsCash = isCashLikeAccount(credit);
-  if (debitIsCash === creditIsCash) return null;
-  const cashCode = debitIsCash ? debit : credit;
-  const cfFund = fund || fundFromAccount(cashCode) || null;
-  return {
-    date,
-    type: debitIsCash ? "receipt" : "outgoing",
-    bucket: desc,
-    amount,
-    fund: cfFund,
-    note: note || desc,
-  };
-};
 
 /* =================== (2) LOGIN, TOP BAR, DASHBOARD & FORGOT =================== */
 document.addEventListener("DOMContentLoaded", () => {
