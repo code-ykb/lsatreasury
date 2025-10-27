@@ -24,6 +24,29 @@ const loadJSON = (k, fallback = []) =>
   JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
 const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
+const loadCashflow = () => loadJSON(CASHFLOW_KEY);
+const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
+const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
+  const cf = loadCashflow();
+  const entry = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fund ?? null,
+    note: note || "",
+  };
+  if (_tag) entry._tag = _tag;
+  if (_src) entry._src = _src;
+  cf.push(entry);
+  saveCashflow(cf);
+};
+const removeCashflowByTag = (tag) => {
+  if (!tag) return;
+  const filtered = loadCashflow().filter((row) => row._tag !== tag);
+  saveCashflow(filtered);
+};
+
 // Simple (demo) hash
 function hash(s) {
   let h = 0;
@@ -88,6 +111,84 @@ const findUserByEmail = (email) =>
   loadUsers().find(
     (u) => (u.email || "").toLowerCase() === (email || "").toLowerCase()
   );
+
+const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
+const SUPER_ADMIN_NAME = "Super Admin";
+const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
+const SUPER_ADMIN_PASSWORD_HASH = "-1458677651"; // hash("SuperAdmin!2024")
+const ROLE_LABELS = {
+  [SUPER_ADMIN_ROLE]: "Super Admin",
+  "ADMIN": "Admin",
+  "LSA_MEMBER": "LSA Member",
+  "BELIEVER": "Believer",
+};
+const formatRole = (role) => ROLE_LABELS[role] || role || "";
+
+function ensureSuperAdminAccount() {
+  const users = loadUsers();
+  let idx = users.findIndex(
+    (u) => (u.email || "").toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
+  );
+
+  if (idx === -1) {
+    idx = users.findIndex((u) => u.builtIn && u.role === SUPER_ADMIN_ROLE);
+  }
+
+  if (idx === -1) {
+    users.push({
+      id: uuid(),
+      name: SUPER_ADMIN_NAME,
+      email: SUPER_ADMIN_EMAIL,
+      role: SUPER_ADMIN_ROLE,
+      believerId: "",
+      pwHash: SUPER_ADMIN_PASSWORD_HASH,
+      mustChangePW: false,
+      createdAt: new Date().toISOString(),
+      builtIn: true,
+    });
+    saveUsers(users);
+    return;
+  }
+
+  const current = users[idx];
+  let mutated = false;
+
+  if (current.role !== SUPER_ADMIN_ROLE) {
+    current.role = SUPER_ADMIN_ROLE;
+    mutated = true;
+  }
+  if ((current.email || "").toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
+    current.email = SUPER_ADMIN_EMAIL;
+    mutated = true;
+  }
+  if (!current.pwHash) {
+    current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
+    mutated = true;
+  }
+  if (current.builtIn !== true) {
+    current.builtIn = true;
+    mutated = true;
+  }
+  if (!current.name) {
+    current.name = SUPER_ADMIN_NAME;
+    mutated = true;
+  }
+  if (current.mustChangePW) {
+    current.mustChangePW = false;
+    mutated = true;
+  }
+
+  if (mutated) saveUsers(users);
+}
+
+ensureSuperAdminAccount();
+
+if (typeof window !== "undefined") {
+  window.__lsaAuth = Object.assign({}, window.__lsaAuth, {
+    ensureSuperAdminAccount,
+    formatRole,
+  });
+}
 
 /* =================== (1) COA / FUNDS SEEDING (kept as before) =================== */
 const ACCT_TYPES = {
@@ -162,7 +263,198 @@ function ensureSeedDataStrict() {
 }
 // Backward compatibility (some places call ensureSeedData)
 function ensureSeedData() { ensureSeedDataStrict(); }
-const acctByCode = (code) => loadJSON(COA_KEY).find((a) => a.code === code);
+const acctByCode = (code) => {
+  if (code === null || code === undefined) return null;
+  const codeStr = String(code).trim();
+  if (!codeStr) return null;
+  return loadJSON(COA_KEY).find((a) => a.code === codeStr) || null;
+};
+
+const CASH_CODE_PREFIXES = ["10", "11"];
+const isCashLikeAccount = (code) => {
+  if (!code) return false;
+  if (code === "1000" || code === "1010") return true;
+  const acct = acctByCode(code);
+  if (!acct) return false;
+  if (acct.type !== ACCT_TYPES.ASSET) return false;
+  if (CASH_CODE_PREFIXES.some((p) => (acct.code || "").startsWith(p))) return true;
+  const name = (acct.name || "").toLowerCase();
+  return name.includes("cash") || name.includes("bank");
+};
+const fundFromAccount = (code) => {
+  const acct = acctByCode(code);
+  if (!acct) return null;
+  const fund = typeof acct.fund === "string" ? acct.fund.trim() : "";
+  return fund || null;
+};
+const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
+  const hint = typeof fundHint === "string" ? fundHint.trim() : "";
+  if (hint) return hint;
+
+  const debitFund = fundFromAccount(debitCode);
+  const creditFund = fundFromAccount(creditCode);
+  if (debitFund && creditFund) {
+    if (debitFund === creditFund) return debitFund;
+    return debitFund || creditFund;
+  }
+  if (debitFund) return debitFund;
+  if (creditFund) return creditFund;
+
+  const funds = loadJSON(FUNDS_KEY, []);
+  const general = funds.find((f) => f.code === "GEN");
+  const normalizeCode = (code) => (code === null || code === undefined ? "" : String(code).trim());
+  const isGeneralCash = (code) => {
+    const c = normalizeCode(code);
+    return c === "1000" || c === "1010";
+  };
+
+  if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) {
+    return general.code;
+  }
+
+  return "";
+};
+const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note = "" }) => {
+  const debitCode = debit === null || debit === undefined ? "" : String(debit).trim();
+  const creditCode = credit === null || credit === undefined ? "" : String(credit).trim();
+  if (!debitCode || !creditCode) return null;
+
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt === 0) return null;
+
+  const label = (desc === null || desc === undefined ? "" : String(desc)).trim() || "Cash movement";
+  const cleanNote = (note === null || note === undefined ? "" : String(note)).trim() || label;
+  const debitIsCash = isCashLikeAccount(debitCode);
+  const creditIsCash = isCashLikeAccount(creditCode);
+  if (debitIsCash === creditIsCash) return null;
+
+  const cashCode = debitIsCash ? debitCode : creditCode;
+  const cfFund = (typeof fund === "string" ? fund.trim() : "") || fundFromAccount(cashCode) || null;
+
+  return {
+    date,
+    type: debitIsCash ? "receipt" : "outgoing",
+    bucket: label,
+    amount: amt,
+    fund: cfFund,
+    note: cleanNote,
+  };
+};
+
+const syncTaggedArtifacts = (row, source) => {
+  if (!row || row.id === null || row.id === undefined) return row;
+
+  const tag = String(row.id).trim();
+  if (!tag) return row;
+
+  const dateISO = row.date === null || row.date === undefined ? "" : String(row.date).trim();
+  const debit = row.debit === null || row.debit === undefined ? "" : String(row.debit).trim();
+  const credit = row.credit === null || row.credit === undefined ? "" : String(row.credit).trim();
+  const rawAmount = Number(row.amount);
+  const hasAmount = Number.isFinite(rawAmount) && rawAmount !== 0;
+  const amount = hasAmount ? rawAmount : 0;
+  const baseDesc = row.desc ?? row.narr ?? `${source} entry`;
+  const desc = (baseDesc === null || baseDesc === undefined ? `${source} entry` : String(baseDesc)).trim() || `${source} entry`;
+  const baseNote = row.note ?? row.narr ?? row.desc ?? desc;
+  const note = (baseNote === null || baseNote === undefined ? desc : String(baseNote)).trim() || desc;
+  const fundHint = typeof row.fund === "string" ? row.fund.trim() : "";
+
+  const valid = !!dateISO && !!debit && !!credit && hasAmount;
+  const derivedFund = valid ? deriveFundForEntry(fundHint, debit, credit) : fundHint;
+  const normalized = {
+    ...row,
+    id: tag,
+    date: dateISO,
+    desc,
+    note,
+    debit,
+    credit,
+    amount,
+    fund: derivedFund || "",
+  };
+
+  const pruneByTag = (entries) => entries.filter((entry) => entry && entry._tag !== tag);
+
+  let journal = loadJSON(JOURNAL_KEY, []);
+  const originalJournalLen = journal.length;
+  journal = pruneByTag(journal);
+  if (valid) {
+    journal.push({
+      date: dateISO,
+      fund: derivedFund || "",
+      desc,
+      debit,
+      credit,
+      amount,
+      _tag: tag,
+      _src: source,
+    });
+  }
+  if (journal.length !== originalJournalLen || valid) {
+    saveJSON(JOURNAL_KEY, journal);
+  }
+
+  let cashflow = loadCashflow();
+  const originalCashflowLen = cashflow.length;
+  cashflow = pruneByTag(cashflow);
+  if (valid) {
+    const cfEntry = buildCashflowEntry({
+      date: dateISO,
+      debit,
+      credit,
+      amount,
+      desc,
+      fund: derivedFund || "",
+      note,
+    });
+    if (cfEntry) cashflow.push({ ...cfEntry, _tag: tag, _src: source });
+  }
+  if (cashflow.length !== originalCashflowLen || valid) {
+    saveCashflow(cashflow);
+  }
+
+  return normalized;
+};
+
+const syncTaggedEntryCollections = () => {
+  ensureSeedDataStrict();
+  const process = (storageKey, source) => {
+    const rows = loadJSON(storageKey, []);
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    let mutated = false;
+    const normalized = rows.map((row) => {
+      const copy = { ...row };
+      const result = syncTaggedArtifacts(copy, source);
+      const fieldsToCheck = ["date", "desc", "debit", "credit", "amount", "fund", "note"];
+      if (
+        !mutated &&
+        fieldsToCheck.some((field) => (row?.[field] ?? "") !== (result?.[field] ?? ""))
+      ) {
+        mutated = true;
+      }
+      return result;
+    });
+
+    if (mutated) saveJSON(storageKey, normalized);
+  };
+
+  try {
+    process("lsa_ob", "OB");
+    process("lsa_adj", "ADJ");
+  } catch (err) {
+    console.error("Failed to sync tagged entries", err);
+  }
+};
+
+syncTaggedEntryCollections();
+
+if (typeof window !== "undefined") {
+  window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
+    syncTaggedEntryCollections,
+    syncTaggedArtifacts,
+  });
+}
 
 /* =================== (2) LOGIN, TOP BAR, DASHBOARD & FORGOT =================== */
 document.addEventListener("DOMContentLoaded", () => {
@@ -200,21 +492,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "dashboard.html";
         return;
       }
-
-      // Legacy fallback (treasurer/secretary/auditor/demo)
-      const role =
-        u.toLowerCase() === "treasurer"
-          ? "ADMIN"
-          : u.toLowerCase() === "secretary"
-          ? "LSA_MEMBER"
-          : u.toLowerCase() === "auditor"
-          ? "LSA_MEMBER"
-          : "BELIEVER";
-      localStorage.setItem(
-        SESSION_KEY,
-        JSON.stringify({ user: u, role, loggedInAt: new Date().toISOString() })
-      );
-      window.location.href = "dashboard.html";
+      alert("Invalid email/password.");
     });
 
     // Forgot Password
@@ -273,7 +551,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const s = JSON.parse(raw);
     const who = document.getElementById("whoami");
-    if (who) who.textContent = `${s.user} (${s.role})`;
+    if (who) who.textContent = `${s.user} (${formatRole(s.role)})`;
     document.getElementById("logoutBtn")?.addEventListener("click", () => {
       localStorage.removeItem(SESSION_KEY);
       window.location.href = "index.html";
@@ -392,7 +670,7 @@ function attachBelieversHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -577,19 +855,12 @@ function attachTransactionsHandlers() {
   };
   const loadJournal = () => loadJSON(JOURNAL_KEY);
   const saveJournal = (v) => saveJSON(JOURNAL_KEY, v);
-  const cfLoad = () => loadJSON(CASHFLOW_KEY);
-  const cfSave = (v) => saveJSON(CASHFLOW_KEY, v);
   const clLoad = () => loadJSON(CONTRIB_LEDGER_KEY);
   const clSave = (v) => saveJSON(CONTRIB_LEDGER_KEY, v);
   const postJ = (e) => {
     const j = loadJournal();
     j.push(e);
     saveJournal(j);
-  };
-  const addCF = (date, type, bucket, amount, fund, note) => {
-    const cf = cfLoad();
-    cf.push({ date, type, bucket, amount, fund, note });
-    cfSave(cf);
   };
   const addCL = (date, believerId, fund, ctype, amount, note) => {
     const cl = clLoad();
@@ -688,7 +959,13 @@ function attachTransactionsHandlers() {
         credit: income.code,
         amount: amt,
       });
-      addCF(date, "receipt", "Contribution Meeting — General Fund", amt, gen.code);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: "Contribution Meeting — General Fund",
+        amount: amt,
+        fund: gen.code,
+      });
       if (believerId) addCL(date, believerId, gen.code, v, amt, note);
     } else if (v === "MEET_EARMARK") {
       const { income, bank } = fundAccounts(fund);
@@ -700,7 +977,13 @@ function attachTransactionsHandlers() {
         credit: income.code,
         amount: amt,
       });
-      addCF(date, "receipt", `Contribution Meeting — ${fund}`, amt, fund);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: `Contribution Meeting — ${fund}`,
+        amount: amt,
+        fund,
+      });
       postJ({
         date,
         fund,
@@ -709,7 +992,13 @@ function attachTransactionsHandlers() {
         credit: GL.CASH_TELLER,
         amount: amt,
       });
-      addCF(date, "outgoing", `Transfer to ${fund}`, amt, fund);
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: `Transfer to ${fund}`,
+        amount: amt,
+        fund,
+      });
       if (believerId) addCL(date, believerId, fund, v, amt, note);
     } else if (v === "MEET_SPECIAL") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
@@ -721,7 +1010,14 @@ function attachTransactionsHandlers() {
         credit: GL.SPECIAL_HELD,
         amount: amt,
       });
-      addCF(date, "receipt", d, amt, null, note);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: d,
+        amount: amt,
+        fund: null,
+        note,
+      });
       if (believerId) addCL(date, believerId, null, v, amt, note);
     } else if (v === "DIR_GEN") {
       const gen = funds.find((f) => f.code === "GEN") || funds[0];
@@ -734,7 +1030,13 @@ function attachTransactionsHandlers() {
         credit: income.code,
         amount: amt,
       });
-      addCF(date, "receipt", "Direct Contribution — General Fund", amt, gen.code);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: "Direct Contribution — General Fund",
+        amount: amt,
+        fund: gen.code,
+      });
       if (believerId) addCL(date, believerId, gen.code, v, amt, note);
     } else if (v === "DIR_EARMARK") {
       const { income, bank } = fundAccounts(fund);
@@ -746,7 +1048,13 @@ function attachTransactionsHandlers() {
         credit: income.code,
         amount: amt,
       });
-      addCF(date, "receipt", `Direct Contribution — ${fund}`, amt, fund);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: `Direct Contribution — ${fund}`,
+        amount: amt,
+        fund,
+      });
       if (believerId) addCL(date, believerId, fund, v, amt, note);
     } else if (v === "DIR_SPECIAL") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
@@ -758,7 +1066,14 @@ function attachTransactionsHandlers() {
         credit: GL.SPECIAL_HELD,
         amount: amt,
       });
-      addCF(date, "receipt", d, amt, null, note);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: d,
+        amount: amt,
+        fund: null,
+        note,
+      });
       if (believerId) addCL(date, believerId, null, v, amt, note);
     } else if (v === "EXT_MEET") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
@@ -770,7 +1085,14 @@ function attachTransactionsHandlers() {
         credit: GL.EXT_PAYABLE,
         amount: amt,
       });
-      addCF(date, "receipt", d, amt, null, note);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: d,
+        amount: amt,
+        fund: null,
+        note,
+      });
     } else if (v === "EXT_DIRECT") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
       postJ({
@@ -781,7 +1103,14 @@ function attachTransactionsHandlers() {
         credit: GL.EXT_PAYABLE,
         amount: amt,
       });
-      addCF(date, "receipt", d, amt, null, note);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: d,
+        amount: amt,
+        fund: null,
+        note,
+      });
     }
 
     alert("Contribution posted.");
@@ -837,7 +1166,13 @@ function attachTransactionsHandlers() {
         credit: "1000",
         amount: amt,
       });
-      addCF(date, "outgoing", `Expense — General Fund — ${narr}`, amt, gen.code);
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: `Expense — General Fund — ${narr}`,
+        amount: amt,
+        fund: gen.code,
+      });
     } else if (v === "PAY_GEN_CASH") {
       postJ({
         date,
@@ -847,7 +1182,13 @@ function attachTransactionsHandlers() {
         credit: "1010",
         amount: amt,
       });
-      addCF(date, "outgoing", `Cash Expense — General Fund — ${narr}`, amt, gen.code);
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: `Cash Expense — General Fund — ${narr}`,
+        amount: amt,
+        fund: gen.code,
+      });
     } else if (v === "PAY_EARMARK") {
       const code = pFund.value;
       const f = fa(code);
@@ -859,7 +1200,13 @@ function attachTransactionsHandlers() {
         credit: "1000",
         amount: amt,
       });
-      addCF(date, "outgoing", `Expense — ${code} — ${narr}`, amt, code);
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: `Expense — ${code} — ${narr}`,
+        amount: amt,
+        fund: code,
+      });
       postJ({
         date,
         fund: code,
@@ -868,7 +1215,13 @@ function attachTransactionsHandlers() {
         credit: f.bank.code,
         amount: amt,
       });
-      addCF(date, "receipt", `Transfer from ${code}`, amt, code);
+      postCashflow({
+        date,
+        type: "receipt",
+        bucket: `Transfer from ${code}`,
+        amount: amt,
+        fund: code,
+      });
     }
     alert("Payment posted.");
     document.getElementById("pClear").click();
@@ -1220,11 +1573,6 @@ function attachAdjustmentsHandlers() {
   };
   const acct = (code) => coa.find((a) => a.code === code) || { code, name: "(?)" };
 
-  const postJournalWithTag = (entry, tagId, source) => {
-    const j = loadJSON(JOURNAL_KEY);
-    j.push({ ...entry, _tag: tagId, _src: source });
-    saveJSON(JOURNAL_KEY, j);
-  };
   const removeJournalByTag = (tagId) => {
     const j = loadJSON(JOURNAL_KEY).filter((x) => x._tag !== tagId);
     saveJSON(JOURNAL_KEY, j);
@@ -1296,12 +1644,13 @@ function attachAdjustmentsHandlers() {
     const btn = e.target.closest("button");
     if (!btn) return;
     const id = btn.dataset.id;
-    if (!confirm("Delete this OB entry? This will also remove its journal lines."))
+    if (!confirm("Delete this OB entry? This will also remove its journal and cash flow lines."))
       return;
     const rows = obRows();
     const keep = rows.filter((x) => x.id !== id);
     saveOBRows(keep);
     removeJournalByTag(id);
+    removeCashflowByTag(id);
     renderOBTable();
     alert("OB entry removed.");
   });
@@ -1321,6 +1670,7 @@ function attachAdjustmentsHandlers() {
     const date = obDate.value;
     const preset = obPreset.value;
     const amt = Number(obAmount.value);
+    const narrText = obNarr.value.trim();
     if (!date) return alert("Select OB date.");
     if (!(amt > 0)) return alert("Enter a positive amount.");
 
@@ -1336,33 +1686,33 @@ function attachAdjustmentsHandlers() {
       if (!fBank || !fEquity) return alert("Missing fund accounts. Check Funds/COA.");
       debitCode = fBank.code;
       creditCode = fEquity.code;
-      desc = obNarr.value.trim() || `OB — Fund Bank for ${code}`;
+      desc = narrText || `OB — Fund Bank for ${code}`;
     } else if (preset === "CASH_ON_HAND") {
       const gen = funds.find((f) => f.code === "GEN") || funds[0];
       const fEquity = coa.find((a) => a.fund === gen.code && a.type === "Fund Equity");
       debitCode = "1010";
       creditCode = fEquity?.code;
       if (!creditCode) return alert("General Fund equity not found.");
-      desc = obNarr.value.trim() || `OB — Cash on Hand`;
+      desc = narrText || `OB — Cash on Hand`;
     } else if (preset === "OPER_BANK") {
       const gen = funds.find((f) => f.code === "GEN") || funds[0];
       const fEquity = coa.find((a) => a.fund === gen.code && a.type === "Fund Equity");
       debitCode = "1000";
       creditCode = fEquity?.code;
       if (!creditCode) return alert("General Fund equity not found.");
-      desc = obNarr.value.trim() || `OB — Operating Bank`;
+      desc = narrText || `OB — Operating Bank`;
     } else if (preset === "SPECIAL_HELD") {
       debitCode = obDebit.value;
       creditCode = GL.SPECIAL_HELD;
-      desc = obNarr.value.trim() || `OB — Special Contributions Held`;
+      desc = narrText || `OB — Special Contributions Held`;
     } else if (preset === "EXTERNAL_PAY") {
       debitCode = obDebit.value;
       creditCode = GL.EXT_PAYABLE;
-      desc = obNarr.value.trim() || `OB — External Payable`;
+      desc = narrText || `OB — External Payable`;
     } else if (preset === "CUSTOM") {
       debitCode = obDebit.value;
       creditCode = obCredit.value;
-      desc = obNarr.value.trim() || `OB — Custom`;
+      desc = narrText || `OB — Custom`;
     }
 
     if (!debitCode || !creditCode) return alert("Select valid accounts.");
@@ -1374,16 +1724,13 @@ function attachAdjustmentsHandlers() {
       debit: debitCode,
       credit: creditCode,
       amount: amt,
+      fund: preset === "FUND_BANK" ? obFund.value : "",
+      note: narrText || desc,
     };
+    const normalizedRow = syncTaggedArtifacts(row, "OB");
     const rows = obRows();
-    rows.push(row);
+    rows.push(normalizedRow);
     saveOBRows(rows);
-
-    postJournalWithTag(
-      { date, fund: "", desc, debit: debitCode, credit: creditCode, amount: amt },
-      tag,
-      "OB"
-    );
 
     renderOBTable();
     alert("Opening Balance posted.");
@@ -1439,12 +1786,13 @@ function attachAdjustmentsHandlers() {
     const btn = e.target.closest("button");
     if (!btn) return;
     const id = btn.dataset.id;
-    if (!confirm("Delete this Adjustment? This will also remove its journal line."))
+    if (!confirm("Delete this Adjustment? This will also remove its journal and cash flow lines."))
       return;
     const rows = adjRows();
     const keep = rows.filter((x) => x.id !== id);
     saveAdjRows(keep);
     removeJournalByTag(id);
+    removeCashflowByTag(id);
     renderAdjTable();
     alert("Adjustment removed.");
   });
@@ -1473,14 +1821,11 @@ function attachAdjustmentsHandlers() {
     const tag = uuid();
     const desc = `ADJ — ${narr}`;
 
-    const row = { id: tag, date, fund, desc, debit, credit, amount: amt };
+    const row = { id: tag, date, fund, desc, debit, credit, amount: amt, note: narr || desc };
+    const normalizedRow = syncTaggedArtifacts(row, "ADJ");
     const rows = adjRows();
-    rows.push(row);
+    rows.push(normalizedRow);
     saveAdjRows(rows);
-
-    const j = loadJSON(JOURNAL_KEY);
-    j.push({ date, fund, desc, debit, credit, amount: amt, _tag: tag, _src: "ADJ" });
-    saveJSON(JOURNAL_KEY, j);
 
     renderAdjTable();
     alert("Adjustment posted.");
@@ -1567,7 +1912,7 @@ function attachReportsHandlers() {
 
   const coa = () => loadJSON(COA_KEY).sort((a, b) => a.code.localeCompare(b.code));
   const journal = () => loadJSON(JOURNAL_KEY);
-  const cfRows = () => loadJSON(CASHFLOW_KEY);
+  const cfRows = () => loadCashflow();
 
   // Badi helpers
   const BADI_MONTHS = [
@@ -1744,9 +2089,25 @@ function attachReportsHandlers() {
 
   // ===== CF =====
   function cfPivot(periods) {
-    const rows = cfRows().filter(
-      (x) => x.date >= periods[0].start && x.date <= periods[periods.length - 1].end
-    );
+    if (!periods.length)
+      return {
+        periods: [],
+        perPeriod: [],
+        receiptRows: [],
+        paymentRows: [],
+        openingBalance: 0,
+        closingBalance: 0,
+      };
+
+    const allRows = cfRows();
+    const firstStart = periods[0].start;
+    const lastEnd = periods[periods.length - 1].end;
+
+    const rows = allRows.filter((x) => x.date >= firstStart && x.date <= lastEnd);
+    const priorBalance = allRows
+      .filter((x) => x.date < firstStart)
+      .reduce((sum, r) => sum + (r.type === "receipt" ? +r.amount || 0 : -(+r.amount || 0)), 0);
+
     const perPeriod = periods.map((p) => ({
       key: p.key,
       label: p.label,
@@ -1754,6 +2115,8 @@ function attachReportsHandlers() {
       end: p.end,
       receiptsTotal: 0,
       paymentsTotal: 0,
+      opening: 0,
+      closing: 0,
     }));
     const bucketMap = new Map();
     const idxForDate = (dISO) => periods.findIndex((p) => dISO >= p.start && dISO <= p.end);
@@ -1773,16 +2136,29 @@ function attachReportsHandlers() {
       else perPeriod[i].paymentsTotal += +r.amount || 0;
     });
 
+    let running = priorBalance;
+    perPeriod.forEach((p) => {
+      p.opening = running;
+      running += p.receiptsTotal - p.paymentsTotal;
+      p.closing = running;
+    });
+
     const receiptRows = [...bucketMap.values()]
       .filter((x) => x.type === "receipt")
       .sort((a, b) => a.bucket.localeCompare(b.bucket));
     const paymentRows = [...bucketMap.values()]
       .filter((x) => x.type !== "receipt")
       .sort((a, b) => a.bucket.localeCompare(b.bucket));
-    return { periods, perPeriod, receiptRows, paymentRows };
+    return { periods, perPeriod, receiptRows, paymentRows, openingBalance: priorBalance, closingBalance: running };
   }
   function renderCF(periods) {
-    const { perPeriod, receiptRows, paymentRows } = cfPivot(periods);
+    const { perPeriod, receiptRows, paymentRows, openingBalance, closingBalance } = cfPivot(periods);
+    if (!periods.length) {
+      cfContainer.innerHTML =
+        '<div class="table-wrap"><table class="table"><tbody><tr><td style="text-align:center;color:#6b7280;">No periods selected.</td></tr></tbody></table></div>';
+      cfMeta.textContent = "";
+      return;
+    }
     const headTop = ["<th>Category</th>"]
       .concat(periods.map((p) => `<th>${p.label}</th>`))
       .join("");
@@ -1801,6 +2177,9 @@ function attachReportsHandlers() {
       }`;
     };
     const rowsHTML = `
+      <tr><td style="text-align:right;font-weight:700;">Opening Balance</td>${perPeriod
+        .map((pp) => `<td style="text-align:right;font-weight:700;">${pp.opening.toFixed(2)}</td>`)
+        .join("")}</tr>
       ${sec("Receipts", receiptRows)}
       <tr><td style="text-align:right;font-weight:700;">Total Receipts</td>${perPeriod
         .map(
@@ -1821,6 +2200,9 @@ function attachReportsHandlers() {
             ).toFixed(2)}</td>`
         )
         .join("")}</tr>
+      <tr><td style="text-align:right;font-weight:700;">Closing Balance</td>${perPeriod
+        .map((pp) => `<td style="text-align:right;font-weight:700;">${pp.closing.toFixed(2)}</td>`)
+        .join("")}</tr>
     `;
     cfContainer.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr>${headTop}</tr></thead><tbody>${rowsHTML}</tbody></table></div>`;
     const sumR = perPeriod.reduce((s, p) => s + p.receiptsTotal, 0);
@@ -1831,7 +2213,9 @@ function attachReportsHandlers() {
         : "Gregorian Calendar";
     cfMeta.textContent = `Calendar: ${calLabel} — Total Receipts: Rs ${sumR.toFixed(
       2
-    )} • Total Payments: Rs ${sumP.toFixed(2)} • Net: Rs ${(sumR - sumP).toFixed(2)}`;
+    )} • Total Payments: Rs ${sumP.toFixed(2)} • Net: Rs ${(sumR - sumP).toFixed(
+      2
+    )} • Opening Balance: Rs ${openingBalance.toFixed(2)} • Closing Balance: Rs ${closingBalance.toFixed(2)}`;
   }
   function runCF() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
@@ -2293,15 +2677,21 @@ function attachUsersHandlers() {
     tblBody.innerHTML = "";
     list.forEach((u) => {
       const tr = document.createElement("tr");
+      const rawRole = u.role || "";
+      const roleLabel = formatRole(rawRole);
+      const protectedNote = u.builtIn ? " (protected)" : "";
+      const deleteAttrs = u.builtIn
+        ? `class="rowbtn danger" data-act="del" data-id="${u.id}" disabled title="The Super Admin account cannot be deleted."`
+        : `class="rowbtn danger" data-act="del" data-id="${u.id}"`;
       tr.innerHTML = `
         <td>${u.name || ""}</td>
         <td>${u.email || ""}</td>
-        <td>${u.role || ""}</td>
+        <td>${roleLabel}${protectedNote}</td>
         <td>${u.believerId || ""}</td>
         <td>${u.mustChangePW ? "Yes" : "No"}</td>
         <td>
           <button class="rowbtn" data-act="reset" data-id="${u.id}">Reset Link</button>
-          <button class="rowbtn danger" data-act="del" data-id="${u.id}">Delete</button>
+          <button ${deleteAttrs}>Delete</button>
         </td>
       `;
       tblBody.appendChild(tr);
@@ -2407,6 +2797,10 @@ function attachUsersHandlers() {
     if (!u) return;
 
     if (act === "del") {
+      if (u.builtIn) {
+        alert("The Super Admin account cannot be deleted.");
+        return;
+      }
       if (!confirm(`Delete user ${u.name}?`)) return;
       const keep = users.filter((x) => x.id !== id);
       saveUsers(keep);
