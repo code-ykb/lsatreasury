@@ -1962,9 +1962,25 @@ function attachReportsHandlers() {
 
   // ===== CF =====
   function cfPivot(periods) {
-    const rows = cfRows().filter(
-      (x) => x.date >= periods[0].start && x.date <= periods[periods.length - 1].end
-    );
+    if (!periods.length)
+      return {
+        periods: [],
+        perPeriod: [],
+        receiptRows: [],
+        paymentRows: [],
+        openingBalance: 0,
+        closingBalance: 0,
+      };
+
+    const allRows = cfRows();
+    const firstStart = periods[0].start;
+    const lastEnd = periods[periods.length - 1].end;
+
+    const rows = allRows.filter((x) => x.date >= firstStart && x.date <= lastEnd);
+    const priorBalance = allRows
+      .filter((x) => x.date < firstStart)
+      .reduce((sum, r) => sum + (r.type === "receipt" ? +r.amount || 0 : -(+r.amount || 0)), 0);
+
     const perPeriod = periods.map((p) => ({
       key: p.key,
       label: p.label,
@@ -1972,6 +1988,8 @@ function attachReportsHandlers() {
       end: p.end,
       receiptsTotal: 0,
       paymentsTotal: 0,
+      opening: 0,
+      closing: 0,
     }));
     const bucketMap = new Map();
     const idxForDate = (dISO) => periods.findIndex((p) => dISO >= p.start && dISO <= p.end);
@@ -1991,16 +2009,29 @@ function attachReportsHandlers() {
       else perPeriod[i].paymentsTotal += +r.amount || 0;
     });
 
+    let running = priorBalance;
+    perPeriod.forEach((p) => {
+      p.opening = running;
+      running += p.receiptsTotal - p.paymentsTotal;
+      p.closing = running;
+    });
+
     const receiptRows = [...bucketMap.values()]
       .filter((x) => x.type === "receipt")
       .sort((a, b) => a.bucket.localeCompare(b.bucket));
     const paymentRows = [...bucketMap.values()]
       .filter((x) => x.type !== "receipt")
       .sort((a, b) => a.bucket.localeCompare(b.bucket));
-    return { periods, perPeriod, receiptRows, paymentRows };
+    return { periods, perPeriod, receiptRows, paymentRows, openingBalance: priorBalance, closingBalance: running };
   }
   function renderCF(periods) {
-    const { perPeriod, receiptRows, paymentRows } = cfPivot(periods);
+    const { perPeriod, receiptRows, paymentRows, openingBalance, closingBalance } = cfPivot(periods);
+    if (!periods.length) {
+      cfContainer.innerHTML =
+        '<div class="table-wrap"><table class="table"><tbody><tr><td style="text-align:center;color:#6b7280;">No periods selected.</td></tr></tbody></table></div>';
+      cfMeta.textContent = "";
+      return;
+    }
     const headTop = ["<th>Category</th>"]
       .concat(periods.map((p) => `<th>${p.label}</th>`))
       .join("");
@@ -2019,6 +2050,9 @@ function attachReportsHandlers() {
       }`;
     };
     const rowsHTML = `
+      <tr><td style="text-align:right;font-weight:700;">Opening Balance</td>${perPeriod
+        .map((pp) => `<td style="text-align:right;font-weight:700;">${pp.opening.toFixed(2)}</td>`)
+        .join("")}</tr>
       ${sec("Receipts", receiptRows)}
       <tr><td style="text-align:right;font-weight:700;">Total Receipts</td>${perPeriod
         .map(
@@ -2039,6 +2073,9 @@ function attachReportsHandlers() {
             ).toFixed(2)}</td>`
         )
         .join("")}</tr>
+      <tr><td style="text-align:right;font-weight:700;">Closing Balance</td>${perPeriod
+        .map((pp) => `<td style="text-align:right;font-weight:700;">${pp.closing.toFixed(2)}</td>`)
+        .join("")}</tr>
     `;
     cfContainer.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr>${headTop}</tr></thead><tbody>${rowsHTML}</tbody></table></div>`;
     const sumR = perPeriod.reduce((s, p) => s + p.receiptsTotal, 0);
@@ -2049,7 +2086,9 @@ function attachReportsHandlers() {
         : "Gregorian Calendar";
     cfMeta.textContent = `Calendar: ${calLabel} — Total Receipts: Rs ${sumR.toFixed(
       2
-    )} • Total Payments: Rs ${sumP.toFixed(2)} • Net: Rs ${(sumR - sumP).toFixed(2)}`;
+    )} • Total Payments: Rs ${sumP.toFixed(2)} • Net: Rs ${(sumR - sumP).toFixed(
+      2
+    )} • Opening Balance: Rs ${openingBalance.toFixed(2)} • Closing Balance: Rs ${closingBalance.toFixed(2)}`;
   }
   function runCF() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
