@@ -47,6 +47,33 @@ const removeCashflowByTag = (tag) => {
   saveCashflow(filtered);
 };
 
+const loadCashflow = () => loadJSON(CASHFLOW_KEY);
+const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
+const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
+  const cf = loadCashflow();
+  const entry = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fund ?? null,
+    note: note || "",
+  };
+  if (_tag) entry._tag = _tag;
+  if (_src) entry._src = _src;
+  cf.push(entry);
+  saveCashflow(cf);
+};
+const postCashflowWithTag = (entry, tag, source) => {
+  if (!entry) return;
+  postCashflow({ ...entry, _tag: tag || null, _src: source || null });
+};
+const removeCashflowByTag = (tag) => {
+  if (!tag) return;
+  const filtered = loadCashflow().filter((row) => row._tag !== tag);
+  saveCashflow(filtered);
+};
+
 // Simple (demo) hash
 function hash(s) {
   let h = 0;
@@ -217,15 +244,17 @@ const DEFAULT_FUNDS = [
   { code: "FUN", name: "Funeral Fund" },
   { code: "HDC", name: "Holydays Celebration Fund" },
   { code: "HDW", name: "Holyday Workshop" },
+  { code: "RES", name: "Reserve Account" },
 ];
 
 function accountsForFund(code, name, idx) {
   const i = String(idx).padStart(2, "0");
+  const label = name.trim();
   return [
-    { code: `11${i}0`, name: `Cash at Bank — ${name}`, type: ACCT_TYPES.ASSET, fund: code },
-    { code: `31${i}0`, name: `${name} Fund Equity`, type: ACCT_TYPES.EQUITY, fund: code },
-    { code: `41${i}0`, name: `Contributions — ${name}`, type: ACCT_TYPES.INCOME, fund: code },
-    { code: `51${i}0`, name: `${name} Expenses`, type: ACCT_TYPES.EXPENSE, fund: code },
+    { code: `11${i}0`, name: `Cash at Bank — ${label}`, type: ACCT_TYPES.ASSET, fund: code },
+    { code: `31${i}0`, name: `${label} Equity`, type: ACCT_TYPES.EQUITY, fund: code },
+    { code: `41${i}0`, name: `Contributions — ${label}`, type: ACCT_TYPES.INCOME, fund: code },
+    { code: `51${i}0`, name: `${label} Expenses`, type: ACCT_TYPES.EXPENSE, fund: code },
   ];
 }
 function _dedupeBy(arr, key) {
@@ -237,9 +266,21 @@ function ensureSeedDataStrict() {
   let funds = loadJSON(FUNDS_KEY, []);
 
   if (!Array.isArray(coa) || coa.length === 0) coa = baseCOA();
-  if (!Array.isArray(funds) || funds.length === 0) {
-    DEFAULT_FUNDS.forEach((f, idx) => {
-      funds.push(f);
+  if (!Array.isArray(funds)) funds = [];
+
+  // Always make sure the stock defaults exist, even if new ones are added later.
+  DEFAULT_FUNDS.forEach((f) => {
+    const existing = funds.find((x) => x.code === f.code);
+    if (!existing) {
+      funds.push({ ...f });
+    } else if (!existing.name) {
+      existing.name = f.name;
+    }
+  });
+
+  // If everything was missing we still need to seed the corresponding accounts.
+  if (coa.length === 0) {
+    funds.forEach((f, idx) => {
       accountsForFund(f.code, f.name, idx + 1).forEach((a) => coa.push(a));
     });
   }
@@ -455,6 +496,209 @@ if (typeof window !== "undefined") {
     syncTaggedArtifacts,
   });
 }
+
+const CASH_CODE_PREFIXES = ["10", "11"];
+const isCashLikeAccount = (code) => {
+  if (!code) return false;
+  if (code === "1000" || code === "1010") return true;
+  const acct = acctByCode(code);
+  if (!acct) return false;
+  if (acct.type !== ACCT_TYPES.ASSET) return false;
+  if (CASH_CODE_PREFIXES.some((p) => (acct.code || "").startsWith(p))) return true;
+  const name = (acct.name || "").toLowerCase();
+  return name.includes("cash") || name.includes("bank");
+};
+const fundFromAccount = (code) => {
+  const acct = acctByCode(code);
+  if (!acct) return null;
+  const fund = typeof acct.fund === "string" ? acct.fund.trim() : "";
+  return fund || null;
+};
+const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
+  const hint = typeof fundHint === "string" ? fundHint.trim() : "";
+  if (hint) return hint;
+
+  const debitFund = fundFromAccount(debitCode);
+  const creditFund = fundFromAccount(creditCode);
+  if (debitFund && creditFund) {
+    if (debitFund === creditFund) return debitFund;
+    return debitFund || creditFund;
+  }
+  if (debitFund) return debitFund;
+  if (creditFund) return creditFund;
+
+  const funds = loadJSON(FUNDS_KEY, []);
+  const general = funds.find((f) => f.code === "GEN");
+  const normalizeCode = (code) => (code === null || code === undefined ? "" : String(code).trim());
+  const isGeneralCash = (code) => {
+    const c = normalizeCode(code);
+    return c === "1000" || c === "1010";
+  };
+
+  if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) {
+    return general.code;
+  }
+
+  return "";
+};
+const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note = "" }) => {
+  const debitCode = debit === null || debit === undefined ? "" : String(debit).trim();
+  const creditCode = credit === null || credit === undefined ? "" : String(credit).trim();
+  if (!debitCode || !creditCode) return null;
+
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt === 0) return null;
+
+  const label = (desc === null || desc === undefined ? "" : String(desc)).trim() || "Cash movement";
+  const cleanNote = (note === null || note === undefined ? "" : String(note)).trim() || label;
+  const debitIsCash = isCashLikeAccount(debitCode);
+  const creditIsCash = isCashLikeAccount(creditCode);
+  if (debitIsCash === creditIsCash) return null;
+
+  const cashCode = debitIsCash ? debitCode : creditCode;
+  const cfFund = (typeof fund === "string" ? fund.trim() : "") || fundFromAccount(cashCode) || null;
+
+  return {
+    date,
+    type: debitIsCash ? "receipt" : "outgoing",
+    bucket: label,
+    amount: amt,
+    fund: cfFund,
+    note: cleanNote,
+  };
+};
+
+const syncTaggedArtifacts = (row, source) => {
+  if (!row || row.id === null || row.id === undefined) return row;
+
+  const tag = String(row.id).trim();
+  if (!tag) return row;
+
+  const dateISO = row.date === null || row.date === undefined ? "" : String(row.date).trim();
+  const debit = row.debit === null || row.debit === undefined ? "" : String(row.debit).trim();
+  const credit = row.credit === null || row.credit === undefined ? "" : String(row.credit).trim();
+  const rawAmount = Number(row.amount);
+  const hasAmount = Number.isFinite(rawAmount) && rawAmount !== 0;
+  const amount = hasAmount ? rawAmount : 0;
+  const baseDesc = row.desc ?? row.narr ?? `${source} entry`;
+  const desc = (baseDesc === null || baseDesc === undefined ? `${source} entry` : String(baseDesc)).trim() || `${source} entry`;
+  const baseNote = row.note ?? row.narr ?? row.desc ?? desc;
+  const note = (baseNote === null || baseNote === undefined ? desc : String(baseNote)).trim() || desc;
+  const fundHint = typeof row.fund === "string" ? row.fund.trim() : "";
+
+  const valid = !!dateISO && !!debit && !!credit && hasAmount;
+  const derivedFund = valid ? deriveFundForEntry(fundHint, debit, credit) : fundHint;
+  const normalized = {
+    ...row,
+    id: tag,
+    date: dateISO,
+    desc,
+    note,
+    debit,
+    credit,
+    amount,
+    fund: derivedFund || "",
+  };
+
+  const pruneByTag = (entries) => entries.filter((entry) => entry && entry._tag !== tag);
+
+  let journal = loadJSON(JOURNAL_KEY, []);
+  const originalJournalLen = journal.length;
+  journal = pruneByTag(journal);
+  if (valid) {
+    journal.push({
+      date: dateISO,
+      fund: derivedFund || "",
+      desc,
+      debit,
+      credit,
+      amount,
+      _tag: tag,
+      _src: source,
+    });
+  }
+  if (journal.length !== originalJournalLen || valid) {
+    saveJSON(JOURNAL_KEY, journal);
+  }
+
+  let cashflow = loadCashflow();
+  const originalCashflowLen = cashflow.length;
+  cashflow = pruneByTag(cashflow);
+  if (valid) {
+    const cfEntry = buildCashflowEntry({
+      date: dateISO,
+      debit,
+      credit,
+      amount,
+      desc,
+      fund: derivedFund || "",
+      note,
+    });
+    if (cfEntry) cashflow.push({ ...cfEntry, _tag: tag, _src: source });
+  }
+  if (cashflow.length !== originalCashflowLen || valid) {
+    saveCashflow(cashflow);
+  }
+
+  return normalized;
+};
+
+const syncTaggedEntryCollections = () => {
+  ensureSeedDataStrict();
+  const process = (storageKey, source) => {
+    const rows = loadJSON(storageKey, []);
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    let mutated = false;
+    const normalized = rows.map((row) => {
+      const copy = { ...row };
+      const result = syncTaggedArtifacts(copy, source);
+      const fieldsToCheck = ["date", "desc", "debit", "credit", "amount", "fund", "note"];
+      if (
+        !mutated &&
+        fieldsToCheck.some((field) => (row?.[field] ?? "") !== (result?.[field] ?? ""))
+      ) {
+        mutated = true;
+      }
+      return result;
+    });
+
+    if (mutated) saveJSON(storageKey, normalized);
+  };
+
+  try {
+    process("lsa_ob", "OB");
+    process("lsa_adj", "ADJ");
+  } catch (err) {
+    console.error("Failed to sync tagged entries", err);
+  }
+};
+
+syncTaggedEntryCollections();
+
+if (typeof window !== "undefined") {
+  window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
+    syncTaggedEntryCollections,
+    syncTaggedArtifacts,
+  });
+}
+  return acct && acct.fund ? acct.fund : null;
+};
+const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note = "" }) => {
+  const debitIsCash = isCashLikeAccount(debit);
+  const creditIsCash = isCashLikeAccount(credit);
+  if (debitIsCash === creditIsCash) return null;
+  const cashCode = debitIsCash ? debit : credit;
+  const cfFund = fund || fundFromAccount(cashCode) || null;
+  return {
+    date,
+    type: debitIsCash ? "receipt" : "outgoing",
+    bucket: desc,
+    amount,
+    fund: cfFund,
+    note: note || desc,
+  };
+};
 
 /* =================== (2) LOGIN, TOP BAR, DASHBOARD & FORGOT =================== */
 document.addEventListener("DOMContentLoaded", () => {
@@ -1860,12 +2104,13 @@ function attachReportsHandlers() {
   const tabTB = document.getElementById("tabTB");
   const tabCF = document.getElementById("tabCF");
   const tabIS = document.getElementById("tabIS");
-  const tabBS = document.getElementById("tabBS"); // might be null if not added to HTML
+  // Balance Sheet tab/section are part of the default reports markup.
+  const tabBS = document.getElementById("tabBS");
 
   const tbSection = document.getElementById("tbSection");
   const cfSection = document.getElementById("cfSection");
   const isSection = document.getElementById("isSection");
-  const bsSection = document.getElementById("bsSection"); // might be null
+  const bsSection = document.getElementById("bsSection");
 
   const tbContainer = document.getElementById("tbContainer");
   const tbMeta = document.getElementById("tbMeta");
@@ -1873,7 +2118,7 @@ function attachReportsHandlers() {
   const cfMeta = document.getElementById("cfMeta");
   const isContainer = document.getElementById("isContainer");
   const isMeta = document.getElementById("isMeta");
-  const isViewSel = document.getElementById("isView"); // may be null if not added
+  const isViewSel = document.getElementById("isView"); // Income Statement view selector
   const bsContainer = document.getElementById("bsContainer");
   const bsMeta = document.getElementById("bsMeta");
 
@@ -1930,25 +2175,63 @@ function attachReportsHandlers() {
     const anchor = nawruz(gy);
     const before = d < anchor;
     const by = before ? gy - 1 : gy;
-    const start = before ? nawruz(gy - 1) : anchor;
-    const days = Math.floor((d - start) / 86400000) + 1;
+    const yearStart = before ? nawruz(gy - 1) : anchor;
+    const dayOffset = Math.floor((d - yearStart) / 86400000);
     const interLen = by % 4 === 0 ? 5 : 4;
 
-    if (days <= 342) {
-      const mIdx = Math.ceil(days / 19);
-      return { by, label: `${BADI_MONTHS[mIdx - 1]} ${by}`, span: 19, monthKey: `${String(mIdx).padStart(2, "0")}` };
+    const ayyamiHaStart = 19 * 18;
+    const alaStart = ayyamiHaStart + interLen;
+
+    if (dayOffset < ayyamiHaStart) {
+      const mIdx = Math.floor(dayOffset / 19);
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + mIdx * 19);
+      return {
+        by,
+        label: `${BADI_MONTHS[mIdx]} ${by}`,
+        span: 19,
+        monthKey: `${String(mIdx + 1).padStart(2, "0")}`,
+        monthStart,
+      };
     }
-    if (days <= 342 + interLen) {
-      return { by, label: `Ayyám-i-Há ${by}`, span: interLen, monthKey: "AH" };
+    if (dayOffset < alaStart) {
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + ayyamiHaStart);
+      return {
+        by,
+        label: `Ayyám-i-Há ${by}`,
+        span: interLen,
+        monthKey: "AH",
+        monthStart,
+      };
     }
-    return { by, label: `${BADI_MONTHS[18]} ${by}`, span: 19, monthKey: "19" };
+    if (dayOffset < alaStart + 19) {
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + alaStart);
+      return {
+        by,
+        label: `${BADI_MONTHS[18]} ${by}`,
+        span: 19,
+        monthKey: "19",
+        monthStart,
+      };
+    }
+    const nextYearStart = nawruz(by + 1);
+    return {
+      by: by + 1,
+      label: `${BADI_MONTHS[0]} ${by + 1}`,
+      span: 19,
+      monthKey: "01",
+      monthStart: nextYearStart,
+    };
   }
 
   function slicePeriods(fromISO, toISO, calendar, monthly) {
     const out = [];
-    let d = parseISO(fromISO),
-      end = parseISO(toISO);
-    if (d > end) return out;
+    const fromDate = parseISO(fromISO);
+    const end = parseISO(toISO);
+    if (fromDate > end) return out;
+    let d = new Date(fromDate);
 
     if (!monthly) {
       out.push({
@@ -1981,17 +2264,20 @@ function attachReportsHandlers() {
 
     while (d <= end) {
       const info = toBadiInfo(d);
-      const startISO = iso(d);
-      const next = new Date(d);
-      next.setDate(next.getDate() + (info.span - 1));
-      const endISO = iso(next);
+      const infoStart = new Date(info.monthStart);
+      const infoEnd = new Date(infoStart);
+      infoEnd.setDate(infoEnd.getDate() + (info.span - 1));
+      const startISO = iso(infoStart);
+      const endISO = iso(infoEnd);
       out.push({
         key: `B${info.by}-${info.monthKey}`,
         label: info.label,
         start: startISO < fromISO ? fromISO : startISO,
         end: endISO > toISO ? toISO : endISO,
+        fullStart: startISO,
+        fullEnd: endISO,
       });
-      d = new Date(next);
+      d = new Date(infoEnd);
       d.setDate(d.getDate() + 1);
     }
     return out;
