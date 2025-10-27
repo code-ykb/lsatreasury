@@ -47,6 +47,56 @@ const removeCashflowByTag = (tag) => {
   saveCashflow(filtered);
 };
 
+const loadCashflow = () => loadJSON(CASHFLOW_KEY);
+const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
+const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
+  const cf = loadCashflow();
+  const entry = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fund ?? null,
+    note: note || "",
+  };
+  if (_tag) entry._tag = _tag;
+  if (_src) entry._src = _src;
+  cf.push(entry);
+  saveCashflow(cf);
+};
+const removeCashflowByTag = (tag) => {
+  if (!tag) return;
+  const filtered = loadCashflow().filter((row) => row._tag !== tag);
+  saveCashflow(filtered);
+};
+
+const loadCashflow = () => loadJSON(CASHFLOW_KEY);
+const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
+const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
+  const cf = loadCashflow();
+  const entry = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fund ?? null,
+    note: note || "",
+  };
+  if (_tag) entry._tag = _tag;
+  if (_src) entry._src = _src;
+  cf.push(entry);
+  saveCashflow(cf);
+};
+const postCashflowWithTag = (entry, tag, source) => {
+  if (!entry) return;
+  postCashflow({ ...entry, _tag: tag || null, _src: source || null });
+};
+const removeCashflowByTag = (tag) => {
+  if (!tag) return;
+  const filtered = loadCashflow().filter((row) => row._tag !== tag);
+  saveCashflow(filtered);
+};
+
 // Simple (demo) hash
 function hash(s) {
   let h = 0;
@@ -190,6 +240,84 @@ if (typeof window !== "undefined") {
   });
 }
 
+const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
+const SUPER_ADMIN_NAME = "Super Admin";
+const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
+const SUPER_ADMIN_PASSWORD_HASH = "-1458677651"; // hash("SuperAdmin!2024")
+const ROLE_LABELS = {
+  [SUPER_ADMIN_ROLE]: "Super Admin",
+  "ADMIN": "Admin",
+  "LSA_MEMBER": "LSA Member",
+  "BELIEVER": "Believer",
+};
+const formatRole = (role) => ROLE_LABELS[role] || role || "";
+
+function ensureSuperAdminAccount() {
+  const users = loadUsers();
+  let idx = users.findIndex(
+    (u) => (u.email || "").toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
+  );
+
+  if (idx === -1) {
+    idx = users.findIndex((u) => u.builtIn && u.role === SUPER_ADMIN_ROLE);
+  }
+
+  if (idx === -1) {
+    users.push({
+      id: uuid(),
+      name: SUPER_ADMIN_NAME,
+      email: SUPER_ADMIN_EMAIL,
+      role: SUPER_ADMIN_ROLE,
+      believerId: "",
+      pwHash: SUPER_ADMIN_PASSWORD_HASH,
+      mustChangePW: false,
+      createdAt: new Date().toISOString(),
+      builtIn: true,
+    });
+    saveUsers(users);
+    return;
+  }
+
+  const current = users[idx];
+  let mutated = false;
+
+  if (current.role !== SUPER_ADMIN_ROLE) {
+    current.role = SUPER_ADMIN_ROLE;
+    mutated = true;
+  }
+  if ((current.email || "").toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
+    current.email = SUPER_ADMIN_EMAIL;
+    mutated = true;
+  }
+  if (!current.pwHash) {
+    current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
+    mutated = true;
+  }
+  if (current.builtIn !== true) {
+    current.builtIn = true;
+    mutated = true;
+  }
+  if (!current.name) {
+    current.name = SUPER_ADMIN_NAME;
+    mutated = true;
+  }
+  if (current.mustChangePW) {
+    current.mustChangePW = false;
+    mutated = true;
+  }
+
+  if (mutated) saveUsers(users);
+}
+
+ensureSuperAdminAccount();
+
+if (typeof window !== "undefined") {
+  window.__lsaAuth = Object.assign({}, window.__lsaAuth, {
+    ensureSuperAdminAccount,
+    formatRole,
+  });
+}
+
 /* =================== (1) COA / FUNDS SEEDING (kept as before) =================== */
 const ACCT_TYPES = {
   ASSET: "Asset",
@@ -217,15 +345,17 @@ const DEFAULT_FUNDS = [
   { code: "FUN", name: "Funeral Fund" },
   { code: "HDC", name: "Holydays Celebration Fund" },
   { code: "HDW", name: "Holyday Workshop" },
+  { code: "RES", name: "Reserve Account" },
 ];
 
 function accountsForFund(code, name, idx) {
   const i = String(idx).padStart(2, "0");
+  const label = name.trim();
   return [
-    { code: `11${i}0`, name: `Cash at Bank — ${name}`, type: ACCT_TYPES.ASSET, fund: code },
-    { code: `31${i}0`, name: `${name} Fund Equity`, type: ACCT_TYPES.EQUITY, fund: code },
-    { code: `41${i}0`, name: `Contributions — ${name}`, type: ACCT_TYPES.INCOME, fund: code },
-    { code: `51${i}0`, name: `${name} Expenses`, type: ACCT_TYPES.EXPENSE, fund: code },
+    { code: `11${i}0`, name: `Cash at Bank — ${label}`, type: ACCT_TYPES.ASSET, fund: code },
+    { code: `31${i}0`, name: `${label} Equity`, type: ACCT_TYPES.EQUITY, fund: code },
+    { code: `41${i}0`, name: `Contributions — ${label}`, type: ACCT_TYPES.INCOME, fund: code },
+    { code: `51${i}0`, name: `${label} Expenses`, type: ACCT_TYPES.EXPENSE, fund: code },
   ];
 }
 function _dedupeBy(arr, key) {
@@ -237,9 +367,21 @@ function ensureSeedDataStrict() {
   let funds = loadJSON(FUNDS_KEY, []);
 
   if (!Array.isArray(coa) || coa.length === 0) coa = baseCOA();
-  if (!Array.isArray(funds) || funds.length === 0) {
-    DEFAULT_FUNDS.forEach((f, idx) => {
-      funds.push(f);
+  if (!Array.isArray(funds)) funds = [];
+
+  // Always make sure the stock defaults exist, even if new ones are added later.
+  DEFAULT_FUNDS.forEach((f) => {
+    const existing = funds.find((x) => x.code === f.code);
+    if (!existing) {
+      funds.push({ ...f });
+    } else if (!existing.name) {
+      existing.name = f.name;
+    }
+  });
+
+  // If everything was missing we still need to seed the corresponding accounts.
+  if (coa.length === 0) {
+    funds.forEach((f, idx) => {
       accountsForFund(f.code, f.name, idx + 1).forEach((a) => coa.push(a));
     });
   }
@@ -1860,12 +2002,13 @@ function attachReportsHandlers() {
   const tabTB = document.getElementById("tabTB");
   const tabCF = document.getElementById("tabCF");
   const tabIS = document.getElementById("tabIS");
-  const tabBS = document.getElementById("tabBS"); // might be null if not added to HTML
+  // Balance Sheet tab/section are part of the default reports markup.
+  const tabBS = document.getElementById("tabBS");
 
   const tbSection = document.getElementById("tbSection");
   const cfSection = document.getElementById("cfSection");
   const isSection = document.getElementById("isSection");
-  const bsSection = document.getElementById("bsSection"); // might be null
+  const bsSection = document.getElementById("bsSection");
 
   const tbContainer = document.getElementById("tbContainer");
   const tbMeta = document.getElementById("tbMeta");
@@ -1873,7 +2016,7 @@ function attachReportsHandlers() {
   const cfMeta = document.getElementById("cfMeta");
   const isContainer = document.getElementById("isContainer");
   const isMeta = document.getElementById("isMeta");
-  const isViewSel = document.getElementById("isView"); // may be null if not added
+  const isViewSel = document.getElementById("isView"); // Income Statement view selector
   const bsContainer = document.getElementById("bsContainer");
   const bsMeta = document.getElementById("bsMeta");
 
@@ -1930,25 +2073,63 @@ function attachReportsHandlers() {
     const anchor = nawruz(gy);
     const before = d < anchor;
     const by = before ? gy - 1 : gy;
-    const start = before ? nawruz(gy - 1) : anchor;
-    const days = Math.floor((d - start) / 86400000) + 1;
+    const yearStart = before ? nawruz(gy - 1) : anchor;
+    const dayOffset = Math.floor((d - yearStart) / 86400000);
     const interLen = by % 4 === 0 ? 5 : 4;
 
-    if (days <= 342) {
-      const mIdx = Math.ceil(days / 19);
-      return { by, label: `${BADI_MONTHS[mIdx - 1]} ${by}`, span: 19, monthKey: `${String(mIdx).padStart(2, "0")}` };
+    const ayyamiHaStart = 19 * 18;
+    const alaStart = ayyamiHaStart + interLen;
+
+    if (dayOffset < ayyamiHaStart) {
+      const mIdx = Math.floor(dayOffset / 19);
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + mIdx * 19);
+      return {
+        by,
+        label: `${BADI_MONTHS[mIdx]} ${by}`,
+        span: 19,
+        monthKey: `${String(mIdx + 1).padStart(2, "0")}`,
+        monthStart,
+      };
     }
-    if (days <= 342 + interLen) {
-      return { by, label: `Ayyám-i-Há ${by}`, span: interLen, monthKey: "AH" };
+    if (dayOffset < alaStart) {
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + ayyamiHaStart);
+      return {
+        by,
+        label: `Ayyám-i-Há ${by}`,
+        span: interLen,
+        monthKey: "AH",
+        monthStart,
+      };
     }
-    return { by, label: `${BADI_MONTHS[18]} ${by}`, span: 19, monthKey: "19" };
+    if (dayOffset < alaStart + 19) {
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + alaStart);
+      return {
+        by,
+        label: `${BADI_MONTHS[18]} ${by}`,
+        span: 19,
+        monthKey: "19",
+        monthStart,
+      };
+    }
+    const nextYearStart = nawruz(by + 1);
+    return {
+      by: by + 1,
+      label: `${BADI_MONTHS[0]} ${by + 1}`,
+      span: 19,
+      monthKey: "01",
+      monthStart: nextYearStart,
+    };
   }
 
   function slicePeriods(fromISO, toISO, calendar, monthly) {
     const out = [];
-    let d = parseISO(fromISO),
-      end = parseISO(toISO);
-    if (d > end) return out;
+    const fromDate = parseISO(fromISO);
+    const end = parseISO(toISO);
+    if (fromDate > end) return out;
+    let d = new Date(fromDate);
 
     if (!monthly) {
       out.push({
@@ -1981,17 +2162,20 @@ function attachReportsHandlers() {
 
     while (d <= end) {
       const info = toBadiInfo(d);
-      const startISO = iso(d);
-      const next = new Date(d);
-      next.setDate(next.getDate() + (info.span - 1));
-      const endISO = iso(next);
+      const infoStart = new Date(info.monthStart);
+      const infoEnd = new Date(infoStart);
+      infoEnd.setDate(infoEnd.getDate() + (info.span - 1));
+      const startISO = iso(infoStart);
+      const endISO = iso(infoEnd);
       out.push({
         key: `B${info.by}-${info.monthKey}`,
         label: info.label,
         start: startISO < fromISO ? fromISO : startISO,
         end: endISO > toISO ? toISO : endISO,
+        fullStart: startISO,
+        fullEnd: endISO,
       });
-      d = new Date(next);
+      d = new Date(infoEnd);
       d.setDate(d.getDate() + 1);
     }
     return out;
