@@ -238,6 +238,128 @@ const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note
   };
 };
 
+const syncTaggedEntryCollections = () => {
+  ensureSeedDataStrict();
+  const process = (storageKey, source) => {
+    let rows = loadJSON(storageKey, []);
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    let journal = loadJSON(JOURNAL_KEY, []);
+    let cashflow = loadCashflow();
+    let rowsMutated = false;
+    let journalMutated = false;
+    let cashflowMutated = false;
+
+    rows = rows.map((row) => ({ ...row }));
+
+    rows.forEach((row, idx) => {
+      if (!row || !row.id) return;
+      const tag = row.id;
+      const debit = row.debit;
+      const credit = row.credit;
+      if (!debit || !credit) return;
+
+      const amount = Number(row.amount) || 0;
+      if (!(amount !== 0)) return;
+
+      const desc = row.desc || row.narr || `${source} entry`;
+      const derivedFund = deriveFundForEntry(row.fund || "", debit, credit);
+
+      if ((row.fund || "") !== derivedFund) {
+        rows[idx] = { ...row, fund: derivedFund };
+        rowsMutated = true;
+      }
+
+      let journalFound = false;
+      for (let i = 0; i < journal.length; i++) {
+        const j = journal[i];
+        if (!j || j._tag !== tag) continue;
+        journalFound = true;
+        let changed = false;
+        if (j.date !== row.date) {
+          j.date = row.date;
+          changed = true;
+        }
+        if (j.desc !== desc) {
+          j.desc = desc;
+          changed = true;
+        }
+        if (j.debit !== debit) {
+          j.debit = debit;
+          changed = true;
+        }
+        if (j.credit !== credit) {
+          j.credit = credit;
+          changed = true;
+        }
+        if (+j.amount !== amount) {
+          j.amount = amount;
+          changed = true;
+        }
+        if ((j.fund || "") !== derivedFund) {
+          j.fund = derivedFund;
+          changed = true;
+        }
+        if (j._src !== source) {
+          j._src = source;
+          changed = true;
+        }
+        if (changed) {
+          journal[i] = j;
+          journalMutated = true;
+        }
+      }
+
+      if (!journalFound) {
+        journal.push({
+          date: row.date,
+          fund: derivedFund,
+          desc,
+          debit,
+          credit,
+          amount,
+          _tag: tag,
+          _src: source,
+        });
+        journalMutated = true;
+      }
+
+      const cfEntry = buildCashflowEntry({
+        date: row.date,
+        debit,
+        credit,
+        amount,
+        desc,
+        fund: derivedFund,
+        note: row.note || desc,
+      });
+
+      const filtered = cashflow.filter((c) => c && c._tag !== tag);
+      if (filtered.length !== cashflow.length) {
+        cashflow = filtered;
+        cashflowMutated = true;
+      }
+      if (cfEntry) {
+        cashflow.push({ ...cfEntry, _tag: tag, _src: source });
+        cashflowMutated = true;
+      }
+    });
+
+    if (rowsMutated) saveJSON(storageKey, rows);
+    if (journalMutated) saveJSON(JOURNAL_KEY, journal);
+    if (cashflowMutated) saveCashflow(cashflow);
+  };
+
+  try {
+    process("lsa_ob", "OB");
+    process("lsa_adj", "ADJ");
+  } catch (err) {
+    console.error("Failed to sync tagged entries", err);
+  }
+};
+
+syncTaggedEntryCollections();
+
 /* =================== (2) LOGIN, TOP BAR, DASHBOARD & FORGOT =================== */
 document.addEventListener("DOMContentLoaded", () => {
   // ---- Login ----
