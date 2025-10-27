@@ -116,15 +116,17 @@ const DEFAULT_FUNDS = [
   { code: "FUN", name: "Funeral Fund" },
   { code: "HDC", name: "Holydays Celebration Fund" },
   { code: "HDW", name: "Holyday Workshop" },
+  { code: "RES", name: "Reserve Account" },
 ];
 
 function accountsForFund(code, name, idx) {
   const i = String(idx).padStart(2, "0");
+  const label = name.trim();
   return [
-    { code: `11${i}0`, name: `Cash at Bank — ${name}`, type: ACCT_TYPES.ASSET, fund: code },
-    { code: `31${i}0`, name: `${name} Fund Equity`, type: ACCT_TYPES.EQUITY, fund: code },
-    { code: `41${i}0`, name: `Contributions — ${name}`, type: ACCT_TYPES.INCOME, fund: code },
-    { code: `51${i}0`, name: `${name} Expenses`, type: ACCT_TYPES.EXPENSE, fund: code },
+    { code: `11${i}0`, name: `Cash at Bank — ${label}`, type: ACCT_TYPES.ASSET, fund: code },
+    { code: `31${i}0`, name: `${label} Equity`, type: ACCT_TYPES.EQUITY, fund: code },
+    { code: `41${i}0`, name: `Contributions — ${label}`, type: ACCT_TYPES.INCOME, fund: code },
+    { code: `51${i}0`, name: `${label} Expenses`, type: ACCT_TYPES.EXPENSE, fund: code },
   ];
 }
 function _dedupeBy(arr, key) {
@@ -136,9 +138,21 @@ function ensureSeedDataStrict() {
   let funds = loadJSON(FUNDS_KEY, []);
 
   if (!Array.isArray(coa) || coa.length === 0) coa = baseCOA();
-  if (!Array.isArray(funds) || funds.length === 0) {
-    DEFAULT_FUNDS.forEach((f, idx) => {
-      funds.push(f);
+  if (!Array.isArray(funds)) funds = [];
+
+  // Always make sure the stock defaults exist, even if new ones are added later.
+  DEFAULT_FUNDS.forEach((f) => {
+    const existing = funds.find((x) => x.code === f.code);
+    if (!existing) {
+      funds.push({ ...f });
+    } else if (!existing.name) {
+      existing.name = f.name;
+    }
+  });
+
+  // If everything was missing we still need to seed the corresponding accounts.
+  if (coa.length === 0) {
+    funds.forEach((f, idx) => {
       accountsForFund(f.code, f.name, idx + 1).forEach((a) => coa.push(a));
     });
   }
