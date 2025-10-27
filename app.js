@@ -185,7 +185,12 @@ function ensureSeedDataStrict() {
 }
 // Backward compatibility (some places call ensureSeedData)
 function ensureSeedData() { ensureSeedDataStrict(); }
-const acctByCode = (code) => loadJSON(COA_KEY).find((a) => a.code === code);
+const acctByCode = (code) => {
+  if (code === null || code === undefined) return null;
+  const codeStr = String(code).trim();
+  if (!codeStr) return null;
+  return loadJSON(COA_KEY).find((a) => a.code === codeStr) || null;
+};
 
 const CASH_CODE_PREFIXES = ["10", "11"];
 const isCashLikeAccount = (code) => {
@@ -200,10 +205,14 @@ const isCashLikeAccount = (code) => {
 };
 const fundFromAccount = (code) => {
   const acct = acctByCode(code);
-  return acct && acct.fund ? acct.fund : null;
+  if (!acct) return null;
+  const fund = typeof acct.fund === "string" ? acct.fund.trim() : "";
+  return fund || null;
 };
 const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
-  if (fundHint) return fundHint;
+  const hint = typeof fundHint === "string" ? fundHint.trim() : "";
+  if (hint) return hint;
+
   const debitFund = fundFromAccount(debitCode);
   const creditFund = fundFromAccount(creditCode);
   if (debitFund && creditFund) {
@@ -212,46 +221,79 @@ const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
   }
   if (debitFund) return debitFund;
   if (creditFund) return creditFund;
+
   const funds = loadJSON(FUNDS_KEY, []);
   const general = funds.find((f) => f.code === "GEN");
-  const isGeneralCash = (code) => code === "1000" || code === "1010";
-  if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) return general.code;
+  const normalizeCode = (code) => (code === null || code === undefined ? "" : String(code).trim());
+  const isGeneralCash = (code) => {
+    const c = normalizeCode(code);
+    return c === "1000" || c === "1010";
+  };
+
+  if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) {
+    return general.code;
+  }
+
   return "";
 };
 const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note = "" }) => {
-  const debitIsCash = isCashLikeAccount(debit);
-  const creditIsCash = isCashLikeAccount(credit);
+  const debitCode = debit === null || debit === undefined ? "" : String(debit).trim();
+  const creditCode = credit === null || credit === undefined ? "" : String(credit).trim();
+  if (!debitCode || !creditCode) return null;
+
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt === 0) return null;
+
+  const label = (desc === null || desc === undefined ? "" : String(desc)).trim() || "Cash movement";
+  const cleanNote = (note === null || note === undefined ? "" : String(note)).trim() || label;
+  const debitIsCash = isCashLikeAccount(debitCode);
+  const creditIsCash = isCashLikeAccount(creditCode);
   if (debitIsCash === creditIsCash) return null;
-  const cashCode = debitIsCash ? debit : credit;
-  const cfFund = fund || fundFromAccount(cashCode) || null;
+
+  const cashCode = debitIsCash ? debitCode : creditCode;
+  const cfFund = (typeof fund === "string" ? fund.trim() : "") || fundFromAccount(cashCode) || null;
+
   return {
     date,
     type: debitIsCash ? "receipt" : "outgoing",
-    bucket: desc,
-    amount,
+    bucket: label,
+    amount: amt,
     fund: cfFund,
-    note: note || desc,
+    note: cleanNote,
   };
 };
 
 const syncTaggedArtifacts = (row, source) => {
-  if (!row || !row.id) return row;
+  if (!row || row.id === null || row.id === undefined) return row;
 
-  const tag = row.id;
-  const amount = Number(row.amount) || 0;
-  const debit = row.debit;
-  const credit = row.credit;
-  const desc = row.desc || row.narr || `${source} entry`;
-  const note = row.note || row.narr || row.desc || desc;
-  const valid =
-    !!row.date &&
-    !!debit &&
-    !!credit &&
-    !Number.isNaN(amount) &&
-    amount !== 0;
+  const tag = String(row.id).trim();
+  if (!tag) return row;
 
-  const derivedFund = valid ? deriveFundForEntry(row.fund || "", debit, credit) : row.fund || "";
-  const normalized = { ...row, desc, note, fund: derivedFund };
+  const dateISO = row.date === null || row.date === undefined ? "" : String(row.date).trim();
+  const debit = row.debit === null || row.debit === undefined ? "" : String(row.debit).trim();
+  const credit = row.credit === null || row.credit === undefined ? "" : String(row.credit).trim();
+  const rawAmount = Number(row.amount);
+  const hasAmount = Number.isFinite(rawAmount) && rawAmount !== 0;
+  const amount = hasAmount ? rawAmount : 0;
+  const baseDesc = row.desc ?? row.narr ?? `${source} entry`;
+  const desc = (baseDesc === null || baseDesc === undefined ? `${source} entry` : String(baseDesc)).trim() || `${source} entry`;
+  const baseNote = row.note ?? row.narr ?? row.desc ?? desc;
+  const note = (baseNote === null || baseNote === undefined ? desc : String(baseNote)).trim() || desc;
+  const fundHint = typeof row.fund === "string" ? row.fund.trim() : "";
+
+  const valid = !!dateISO && !!debit && !!credit && hasAmount;
+  const derivedFund = valid ? deriveFundForEntry(fundHint, debit, credit) : fundHint;
+  const normalized = {
+    ...row,
+    id: tag,
+    date: dateISO,
+    desc,
+    note,
+    debit,
+    credit,
+    amount,
+    fund: derivedFund || "",
+  };
 
   const pruneByTag = (entries) => entries.filter((entry) => entry && entry._tag !== tag);
 
@@ -260,8 +302,8 @@ const syncTaggedArtifacts = (row, source) => {
   journal = pruneByTag(journal);
   if (valid) {
     journal.push({
-      date: row.date,
-      fund: derivedFund,
+      date: dateISO,
+      fund: derivedFund || "",
       desc,
       debit,
       credit,
@@ -279,12 +321,12 @@ const syncTaggedArtifacts = (row, source) => {
   cashflow = pruneByTag(cashflow);
   if (valid) {
     const cfEntry = buildCashflowEntry({
-      date: row.date,
+      date: dateISO,
       debit,
       credit,
       amount,
       desc,
-      fund: derivedFund,
+      fund: derivedFund || "",
       note,
     });
     if (cfEntry) cashflow.push({ ...cfEntry, _tag: tag, _src: source });
