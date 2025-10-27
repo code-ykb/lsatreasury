@@ -1762,25 +1762,63 @@ function attachReportsHandlers() {
     const anchor = nawruz(gy);
     const before = d < anchor;
     const by = before ? gy - 1 : gy;
-    const start = before ? nawruz(gy - 1) : anchor;
-    const days = Math.floor((d - start) / 86400000) + 1;
+    const yearStart = before ? nawruz(gy - 1) : anchor;
+    const dayOffset = Math.floor((d - yearStart) / 86400000);
     const interLen = by % 4 === 0 ? 5 : 4;
 
-    if (days <= 342) {
-      const mIdx = Math.ceil(days / 19);
-      return { by, label: `${BADI_MONTHS[mIdx - 1]} ${by}`, span: 19, monthKey: `${String(mIdx).padStart(2, "0")}` };
+    const ayyamiHaStart = 19 * 18;
+    const alaStart = ayyamiHaStart + interLen;
+
+    if (dayOffset < ayyamiHaStart) {
+      const mIdx = Math.floor(dayOffset / 19);
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + mIdx * 19);
+      return {
+        by,
+        label: `${BADI_MONTHS[mIdx]} ${by}`,
+        span: 19,
+        monthKey: `${String(mIdx + 1).padStart(2, "0")}`,
+        monthStart,
+      };
     }
-    if (days <= 342 + interLen) {
-      return { by, label: `Ayyám-i-Há ${by}`, span: interLen, monthKey: "AH" };
+    if (dayOffset < alaStart) {
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + ayyamiHaStart);
+      return {
+        by,
+        label: `Ayyám-i-Há ${by}`,
+        span: interLen,
+        monthKey: "AH",
+        monthStart,
+      };
     }
-    return { by, label: `${BADI_MONTHS[18]} ${by}`, span: 19, monthKey: "19" };
+    if (dayOffset < alaStart + 19) {
+      const monthStart = new Date(yearStart);
+      monthStart.setDate(monthStart.getDate() + alaStart);
+      return {
+        by,
+        label: `${BADI_MONTHS[18]} ${by}`,
+        span: 19,
+        monthKey: "19",
+        monthStart,
+      };
+    }
+    const nextYearStart = nawruz(by + 1);
+    return {
+      by: by + 1,
+      label: `${BADI_MONTHS[0]} ${by + 1}`,
+      span: 19,
+      monthKey: "01",
+      monthStart: nextYearStart,
+    };
   }
 
   function slicePeriods(fromISO, toISO, calendar, monthly) {
     const out = [];
-    let d = parseISO(fromISO),
-      end = parseISO(toISO);
-    if (d > end) return out;
+    const fromDate = parseISO(fromISO);
+    const end = parseISO(toISO);
+    if (fromDate > end) return out;
+    let d = new Date(fromDate);
 
     if (!monthly) {
       out.push({
@@ -1813,17 +1851,20 @@ function attachReportsHandlers() {
 
     while (d <= end) {
       const info = toBadiInfo(d);
-      const startISO = iso(d);
-      const next = new Date(d);
-      next.setDate(next.getDate() + (info.span - 1));
-      const endISO = iso(next);
+      const infoStart = new Date(info.monthStart);
+      const infoEnd = new Date(infoStart);
+      infoEnd.setDate(infoEnd.getDate() + (info.span - 1));
+      const startISO = iso(infoStart);
+      const endISO = iso(infoEnd);
       out.push({
         key: `B${info.by}-${info.monthKey}`,
         label: info.label,
         start: startISO < fromISO ? fromISO : startISO,
         end: endISO > toISO ? toISO : endISO,
+        fullStart: startISO,
+        fullEnd: endISO,
       });
-      d = new Date(next);
+      d = new Date(infoEnd);
       d.setDate(d.getDate() + 1);
     }
     return out;
