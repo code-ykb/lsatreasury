@@ -1691,12 +1691,13 @@ function attachReportsHandlers() {
   const tabTB = document.getElementById("tabTB");
   const tabCF = document.getElementById("tabCF");
   const tabIS = document.getElementById("tabIS");
-  const tabBS = document.getElementById("tabBS"); // might be null if not added to HTML
+  // Balance Sheet tab/section are part of the default reports markup.
+  const tabBS = document.getElementById("tabBS");
 
   const tbSection = document.getElementById("tbSection");
   const cfSection = document.getElementById("cfSection");
   const isSection = document.getElementById("isSection");
-  const bsSection = document.getElementById("bsSection"); // might be null
+  const bsSection = document.getElementById("bsSection");
 
   const tbContainer = document.getElementById("tbContainer");
   const tbMeta = document.getElementById("tbMeta");
@@ -1704,7 +1705,7 @@ function attachReportsHandlers() {
   const cfMeta = document.getElementById("cfMeta");
   const isContainer = document.getElementById("isContainer");
   const isMeta = document.getElementById("isMeta");
-  const isViewSel = document.getElementById("isView"); // may be null if not added
+  const isViewSel = document.getElementById("isView"); // Income Statement view selector
   const bsContainer = document.getElementById("bsContainer");
   const bsMeta = document.getElementById("bsMeta");
 
