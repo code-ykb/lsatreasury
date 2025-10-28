@@ -63,15 +63,111 @@ const postCashflowWithTag = (entry, tag, source) => {
   if (!entry) return;
   postCashflow(entry, tag, source);
 };
+const normalizeTag = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value).trim();
+};
+const matchesTag = (row, tag) => {
+  const normalized = normalizeTag(tag);
+  if (!normalized || !row) return false;
+  const candidates = [row._tag, row.tag, row.id, row.uuid];
+  return candidates.some((candidate) => normalizeTag(candidate) === normalized);
+};
+const journalSignature = (row) => {
+  if (!row) return null;
+  const amt = Number(row.amount);
+  if (!Number.isFinite(amt)) return null;
+  const parts = [
+    row.date || "",
+    row.debit || "",
+    row.credit || "",
+    amt.toFixed(2),
+    row.desc || "",
+    row.note || "",
+    row.fund || "",
+  ];
+  return parts.join("||");
+};
+const cashflowSignatureWithNote = (row) => {
+  const clean = sanitizeCashflowRow(row);
+  if (!clean) return null;
+  const base = cashflowSignature(clean);
+  const note = clean.note ? String(clean.note) : "";
+  return `${base}||${note}`;
+};
+const ledgerSignature = (row) => {
+  if (!row) return null;
+  const amt = Number(row.amount);
+  if (!Number.isFinite(amt)) return null;
+  return [
+    row.date || "",
+    row.believerId || "",
+    row.fund || "",
+    row.type || "",
+    amt.toFixed(2),
+    row.note || "",
+  ].join("||");
+};
+const pruneTaggedRows = (rows, tag, signatureFn) => {
+  const normalized = normalizeTag(tag);
+  if (!normalized) return rows || [];
+  const source = Array.isArray(rows) ? rows : [];
+  const directMatches = source.filter((row) => matchesTag(row, normalized));
+  if (directMatches.length === 0) {
+    return source.filter((row) => !matchesTag(row, normalized));
+  }
+  const signatures = new Set();
+  directMatches.forEach((row) => {
+    const sig = signatureFn ? signatureFn(row) : null;
+    if (sig) signatures.add(sig);
+  });
+  return source.filter((row) => {
+    if (matchesTag(row, normalized)) return false;
+    if (!signatures.size || !signatureFn) return true;
+    if (row && row._tag) return true;
+    const candidate = signatureFn(row);
+    return !candidate || !signatures.has(candidate);
+  });
+};
 const removeJournalByTag = (tag) => {
-  if (!tag) return;
-  const filtered = loadJSON(JOURNAL_KEY).filter((row) => row?._tag !== tag);
-  saveJSON(JOURNAL_KEY, filtered);
+  const current = loadJSON(JOURNAL_KEY);
+  const filtered = pruneTaggedRows(current, tag, journalSignature);
+  if (filtered.length !== current.length) saveJSON(JOURNAL_KEY, filtered);
 };
 const removeCashflowByTag = (tag) => {
-  if (!tag) return;
-  const filtered = loadCashflow().filter((row) => row._tag !== tag);
-  saveCashflow(filtered);
+  const current = loadCashflow();
+  const filtered = pruneTaggedRows(current, tag, cashflowSignatureWithNote);
+  if (filtered.length !== current.length) saveCashflow(filtered);
+};
+const removeLedgerByTag = (tag) => {
+  const current = clLoad();
+  const filtered = pruneTaggedRows(current, tag, ledgerSignature);
+  if (filtered.length !== current.length) clSave(filtered);
+};
+const removeOpeningBalanceByTag = (tag) => {
+  const key = "lsa_ob";
+  const current = loadJSON(key, []);
+  const filtered = pruneTaggedRows(current, tag, journalSignature);
+  if (filtered.length !== current.length) saveJSON(key, filtered);
+};
+const removeAdjustmentByTag = (tag) => {
+  const key = "lsa_adj";
+  const current = loadJSON(key, []);
+  const filtered = pruneTaggedRows(current, tag, journalSignature);
+  if (filtered.length !== current.length) saveJSON(key, filtered);
+};
+const purgeTransactionArtifacts = (tag) => {
+  const normalized = normalizeTag(tag);
+  if (!normalized) return;
+  const txns = readTransactions();
+  const keptTxns = txns.filter((row) => !matchesTag(row, normalized));
+  if (keptTxns.length !== txns.length) saveTransactions(keptTxns);
+  removeJournalByTag(normalized);
+  removeCashflowByTag(normalized);
+  removeLedgerByTag(normalized);
+  removeOpeningBalanceByTag(normalized);
+  removeAdjustmentByTag(normalized);
 };
 
 const sanitizeCashflowRow = (row) => {
@@ -1998,6 +2094,32 @@ function attachTransactionsHandlers() {
     });
   }
   renderRecent();
+
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    purgeTransactionArtifacts(tag);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
 
   document.getElementById("recentTable")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action='delete']");
