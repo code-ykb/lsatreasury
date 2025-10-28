@@ -60,6 +60,218 @@ const removeCashflowByTag = (tag) => {
   saveCashflow(filtered);
 };
 
+const sanitizeCashflowRow = (row) => {
+  if (!row) return null;
+  const date = (row.date === null || row.date === undefined ? "" : String(row.date)).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const type = row.type === "receipt" ? "receipt" : "outgoing";
+  const rawAmount = Number(row.amount);
+  if (!Number.isFinite(rawAmount) || rawAmount === 0) return null;
+  const amount = Math.round(rawAmount * 100) / 100;
+  const bucket = (row.bucket === null || row.bucket === undefined ? "" : String(row.bucket)).trim() || "Cash movement";
+  const note = (row.note === null || row.note === undefined ? "" : String(row.note)).trim();
+  const fundRaw = row.fund === null || row.fund === undefined ? "" : String(row.fund).trim();
+  const clean = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fundRaw || null,
+  };
+  if (note) clean.note = note;
+  if (row._tag) clean._tag = row._tag;
+  if (row._src) clean._src = row._src;
+  return clean;
+};
+
+const cashflowSignature = (row) => {
+  const fund = row.fund === null || row.fund === undefined ? "" : String(row.fund).trim();
+  return [row.date, row.type, row.bucket, row.amount.toFixed(2), fund].join("||");
+};
+
+const cashflowRowsEqual = (a, b) => {
+  if (!a || !b) return false;
+  const fields = ["date", "type", "bucket", "amount", "note"];
+  for (const field of fields) {
+    const av = field === "amount" ? Number(a[field] || 0) : a[field] || "";
+    const bv = field === "amount" ? Number(b[field] || 0) : b[field] || "";
+    if (field === "amount") {
+      if (Math.abs(av - bv) > 0.0001) return false;
+    } else if (String(av) !== String(bv)) {
+      return false;
+    }
+  }
+  const aFund = a.fund || "";
+  const bFund = b.fund || "";
+  if (String(aFund) !== String(bFund)) return false;
+  const tagA = a._tag || "";
+  const tagB = b._tag || "";
+  if (tagA !== tagB) return false;
+  const srcA = a._src || "";
+  const srcB = b._src || "";
+  return srcA === srcB;
+};
+
+const ensureCashflowIntegrity = () => {
+  ensureSeedDataStrict();
+
+  const existingRaw = loadCashflow();
+  const existing = [];
+  const existingCounts = new Map();
+  if (Array.isArray(existingRaw)) {
+    existingRaw.forEach((row) => {
+      const clean = sanitizeCashflowRow(row);
+      if (!clean) return;
+      existing.push(clean);
+      const key = cashflowSignature(clean);
+      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
+    });
+  }
+
+  const expectedRows = [];
+  const expectedCounts = new Map();
+  const journalRows = loadJSON(JOURNAL_KEY, []);
+  const fundsByCode = new Map(
+    loadJSON(FUNDS_KEY, []).map((f) => [String(f.code || "").trim(), f])
+  );
+
+  const noteKeyFor = (row) => {
+    if (!row) return null;
+    const date = (row.date === null || row.date === undefined ? "" : String(row.date)).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const amount = Number(row.amount);
+    if (!Number.isFinite(amount) || amount === 0) return null;
+    const fund = typeof row.fund === "string" ? row.fund.trim() : "";
+    return `${date}||${fund}||${Math.round(amount * 100)}`;
+  };
+
+  const expenseNotes = new Map();
+  journalRows.forEach((row) => {
+    const key = noteKeyFor(row);
+    if (!key) return;
+    const desc = row?.desc ? String(row.desc) : "";
+    const match = desc.match(/^(?:Expense|Cash Expense)\s+—\s+(.+?)\s+—\s+(.*)$/);
+    if (!match) return;
+    const note = match[2].trim();
+    if (!note) return;
+    expenseNotes.set(key, note);
+  });
+
+  journalRows.forEach((row) => {
+    const cfEntry = buildCashflowEntry({
+      date: row?.date,
+      debit: row?.debit,
+      credit: row?.credit,
+      amount: row?.amount,
+      desc: row?.desc,
+      fund: row?.fund,
+      note: row?.note,
+    });
+    if (cfEntry) {
+      const candidate = sanitizeCashflowRow({
+        ...cfEntry,
+        note: row?.note || cfEntry.note || "",
+      });
+      if (candidate) {
+        expectedRows.push(candidate);
+        const key = cashflowSignature(candidate);
+        expectedCounts.set(key, (expectedCounts.get(key) || 0) + 1);
+      }
+    }
+
+    const debitIsCash = isCashLikeAccount(row?.debit);
+    const creditIsCash = isCashLikeAccount(row?.credit);
+    if (debitIsCash && creditIsCash) {
+      const desc = row?.desc ? String(row.desc).trim() : "";
+      if (/^Transfer from/i.test(desc)) {
+        let bucket = desc;
+        const lower = desc.toLowerCase();
+        const idx = lower.indexOf(" to ");
+        if (idx !== -1) bucket = desc.slice(0, idx).trim();
+        const fundCode = typeof row?.fund === "string" ? row.fund.trim() : "";
+        if (!bucket) {
+          const fundName = fundsByCode.get(fundCode)?.name || fundCode || "Fund";
+          bucket = `Transfer from ${fundName}`;
+        }
+        const noteLookupKey = noteKeyFor(row);
+        const receiptNote = noteLookupKey ? expenseNotes.get(noteLookupKey) || "" : "";
+        const receiptCandidate = sanitizeCashflowRow({
+          date: row?.date,
+          type: "receipt",
+          bucket,
+          amount: row?.amount,
+          fund: fundCode,
+          note: receiptNote,
+        });
+        if (receiptCandidate) {
+          expectedRows.push(receiptCandidate);
+          const key = cashflowSignature(receiptCandidate);
+          expectedCounts.set(key, (expectedCounts.get(key) || 0) + 1);
+        }
+      }
+    }
+  });
+
+  const needed = new Map();
+  expectedCounts.forEach((count, key) => {
+    const have = existingCounts.get(key) || 0;
+    if (count > have) needed.set(key, count - have);
+  });
+
+  const additions = [];
+  expectedRows.forEach((row) => {
+    const key = cashflowSignature(row);
+    const need = needed.get(key) || 0;
+    if (need > 0) {
+      additions.push(row);
+      needed.set(key, need - 1);
+    }
+  });
+
+  const finalRows = existing.concat(additions);
+  finalRows.sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date);
+    if (dateCmp !== 0) return dateCmp;
+    if (a.type !== b.type) return a.type === "receipt" ? -1 : 1;
+    const bucketCmp = a.bucket.localeCompare(b.bucket);
+    if (bucketCmp !== 0) return bucketCmp;
+    const noteA = a.note || "";
+    const noteB = b.note || "";
+    if (noteA !== noteB) return noteA.localeCompare(noteB);
+    const fundA = a.fund || "";
+    const fundB = b.fund || "";
+    return fundA.localeCompare(fundB);
+  });
+
+  const cleanedOriginal = existing.slice().sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date);
+    if (dateCmp !== 0) return dateCmp;
+    if (a.type !== b.type) return a.type === "receipt" ? -1 : 1;
+    const bucketCmp = a.bucket.localeCompare(b.bucket);
+    if (bucketCmp !== 0) return bucketCmp;
+    const noteA = a.note || "";
+    const noteB = b.note || "";
+    if (noteA !== noteB) return noteA.localeCompare(noteB);
+    const fundA = a.fund || "";
+    const fundB = b.fund || "";
+    return fundA.localeCompare(fundB);
+  });
+
+  let mutated = finalRows.length !== cleanedOriginal.length;
+  if (!mutated) {
+    for (let i = 0; i < finalRows.length; i++) {
+      if (!cashflowRowsEqual(finalRows[i], cleanedOriginal[i])) {
+        mutated = true;
+        break;
+      }
+    }
+  }
+
+  if (mutated) saveCashflow(finalRows);
+
+  return finalRows;
+};
+
 // Simple (demo) hash
 function hash(s) {
   let h = 0;
@@ -314,6 +526,47 @@ const fundFromAccount = (code) => {
   const fund = typeof acct.fund === "string" ? acct.fund.trim() : "";
   return fund || null;
 };
+
+const getGeneralFund = () => {
+  const funds = loadJSON(FUNDS_KEY, []);
+  if (!Array.isArray(funds) || funds.length === 0) return null;
+  return funds.find((f) => f.code === "GEN") || funds[0] || null;
+};
+
+const getGeneralFundBankAccount = () => {
+  const general = getGeneralFund();
+  if (!general) return null;
+  const coa = loadJSON(COA_KEY, []);
+  return (
+    coa.find(
+      (acct) =>
+        acct.fund === general.code &&
+        acct.type === ACCT_TYPES.ASSET &&
+        String(acct.code || "").trim().startsWith("11")
+    ) || null
+  );
+};
+
+const getOperatingBankAccount = () => {
+  const coa = loadJSON(COA_KEY, []);
+  const normalized = (code) => (code === null || code === undefined ? "" : String(code).trim());
+  const explicit = coa.find((acct) => normalized(acct.code) === "1000");
+  if (explicit) return explicit;
+  const unfundedCash = coa.find(
+    (acct) =>
+      acct &&
+      !acct.fund &&
+      acct.type === ACCT_TYPES.ASSET &&
+      normalized(acct.code).startsWith("10")
+  );
+  if (unfundedCash) return unfundedCash;
+  return getGeneralFundBankAccount();
+};
+
+const getGeneralOperatingBankCode = () => {
+  const acct = getOperatingBankAccount();
+  return (acct && String(acct.code || "").trim()) || "1000";
+};
 const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
   const hint = typeof fundHint === "string" ? fundHint.trim() : "";
   if (hint) return hint;
@@ -330,10 +583,23 @@ const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
   const funds = loadJSON(FUNDS_KEY, []);
   const general = funds.find((f) => f.code === "GEN");
   const normalizeCode = (code) => (code === null || code === undefined ? "" : String(code).trim());
-  const isGeneralCash = (code) => {
-    const c = normalizeCode(code);
-    return c === "1000" || c === "1010";
-  };
+  const generalCashCodes = (() => {
+    const base = new Set(["1000", "1010"]);
+    if (!general) return base;
+    const coa = loadJSON(COA_KEY, []);
+    coa.forEach((acct) => {
+      if (
+        acct &&
+        acct.fund === general.code &&
+        acct.type === ACCT_TYPES.ASSET &&
+        String(acct.code || "").trim().startsWith("11")
+      ) {
+        base.add(String(acct.code).trim());
+      }
+    });
+    return base;
+  })();
+  const isGeneralCash = (code) => generalCashCodes.has(normalizeCode(code));
 
   if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) {
     return general.code;
@@ -490,6 +756,8 @@ const syncTaggedEntryCollections = () => {
 };
 
 syncTaggedEntryCollections();
+
+ensureCashflowIntegrity();
 
 if (typeof window !== "undefined") {
   window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
@@ -895,6 +1163,10 @@ function attachTransactionsHandlers() {
       expense: coa.find((a) => a.fund === code && a.type === ACCT_TYPES.EXPENSE),
     };
   };
+  const generalFund = funds.find((f) => f.code === "GEN") || funds[0] || null;
+  const generalFundAccounts = generalFund ? fundAccounts(generalFund.code) : null;
+  const generalFundBankCode = generalFundAccounts?.bank?.code || null;
+  const operatingBankCode = getGeneralOperatingBankCode();
   const loadJournal = () => loadJSON(JOURNAL_KEY);
   const saveJournal = (v) => saveJSON(JOURNAL_KEY, v);
   const clLoad = () => loadJSON(CONTRIB_LEDGER_KEY);
@@ -1062,13 +1334,16 @@ function attachTransactionsHandlers() {
       });
       if (believerId) addCL(date, believerId, null, v, amt, note);
     } else if (v === "DIR_GEN") {
-      const gen = funds.find((f) => f.code === "GEN") || funds[0];
-      const { income } = fundAccounts(gen.code);
+      const gen = generalFund || funds[0];
+      if (!gen) return alert("No funds configured.");
+      const { income, bank } = fundAccounts(gen.code);
+      if (!income) return alert("General Fund income account not found.");
+      const debitCode = (bank && bank.code) || operatingBankCode;
       postJ({
         date,
         fund: gen.code,
         desc: desc[v],
-        debit: GL.CASH_BANK_OP,
+        debit: debitCode,
         credit: income.code,
         amount: amt,
       });
@@ -1087,7 +1362,7 @@ function attachTransactionsHandlers() {
         date,
         fund,
         desc: desc[v],
-        debit: GL.CASH_BANK_OP,
+        debit: operatingBankCode,
         credit: income.code,
         amount: amt,
       });
@@ -1103,7 +1378,7 @@ function attachTransactionsHandlers() {
         fund,
         desc: `Transfer to ${bank.name}`,
         debit: bank.code,
-        credit: GL.CASH_BANK_OP,
+        credit: operatingBankCode,
         amount: amt,
       });
       postCashflow({
@@ -1120,7 +1395,7 @@ function attachTransactionsHandlers() {
         date,
         fund: "SPECIAL",
         desc: d,
-        debit: GL.CASH_BANK_OP,
+        debit: operatingBankCode,
         credit: GL.SPECIAL_HELD,
         amount: amt,
       });
@@ -1157,7 +1432,7 @@ function attachTransactionsHandlers() {
         date,
         fund: "EXTERNAL",
         desc: d,
-        debit: GL.CASH_BANK_OP,
+        debit: operatingBankCode,
         credit: GL.EXT_PAYABLE,
         amount: amt,
       });
@@ -1213,15 +1488,21 @@ function attachTransactionsHandlers() {
     if (!date) return alert("Select date.");
     if (!(amt > 0)) return alert("Enter a positive amount.");
     if (!narr) return alert("Enter narration.");
-    const gen = funds.find((f) => f.code === "GEN") || funds[0];
+    const gen = generalFund || funds[0];
     const fa = (code) => fundAccounts(code);
     if (v === "PAY_GEN_BANK") {
+      if (!gen) return alert("No funds configured.");
+      const accounts = fa(gen.code);
+      const expenseAcct = accounts?.expense?.code;
+      if (!expenseAcct) return alert("General Fund expense account not found.");
+      const creditAccount =
+        accounts?.bank?.code || generalFundBankCode || operatingBankCode;
       postJ({
         date,
         fund: gen.code,
         desc: `Expense — General Fund — ${narr}`,
-        debit: fa(gen.code).expense.code,
-        credit: "1000",
+        debit: expenseAcct,
+        credit: creditAccount,
         amount: amt,
       });
       postCashflow({
@@ -1249,36 +1530,81 @@ function attachTransactionsHandlers() {
       });
     } else if (v === "PAY_EARMARK") {
       const code = pFund.value;
+      if (!code) return alert("Select a fund.");
+      if (generalFund && code === generalFund.code) {
+        const accounts = fa(code);
+        const expenseAcct = accounts?.expense?.code;
+        if (!expenseAcct)
+          return alert("General Fund expense account not found.");
+        const creditAccount =
+          accounts?.bank?.code || generalFundBankCode || operatingBankCode;
+        const label = `Expense — General Fund — ${narr}`;
+        postJ({
+          date,
+          fund: code,
+          desc: label,
+          debit: expenseAcct,
+          credit: creditAccount,
+          amount: amt,
+        });
+        postCashflow({
+          date,
+          type: "outgoing",
+          bucket: label,
+          amount: amt,
+          fund: code,
+        });
+        return;
+      }
+
       const f = fa(code);
+      const expenseAcct = f?.expense?.code;
+      const fundBankAcct = f?.bank?.code;
+      if (!expenseAcct || !fundBankAcct)
+        return alert("Selected fund is missing bank or expense accounts.");
+
+      const fundInfo = funds.find((fund) => fund.code === code) || null;
+      const fundName = fundInfo?.name || code;
+      const stagingBankCode = generalFundBankCode || operatingBankCode;
+      const stagingBank = acctByCode(stagingBankCode);
+      const transferDesc = `Transfer from ${fundName} to ${
+        stagingBank?.name || stagingBankCode
+      }`;
+      const transferBucket = `Transfer from ${fundName}`;
+      const expenseLabel = `Expense — ${fundName} — ${narr}`;
+
       postJ({
         date,
         fund: code,
-        desc: `Expense — ${code} — ${narr}`,
-        debit: f.expense.code,
-        credit: "1000",
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: `Expense — ${code} — ${narr}`,
-        amount: amt,
-        fund: code,
-      });
-      postJ({
-        date,
-        fund: code,
-        desc: `Transfer from ${f.bank.name}`,
-        debit: "1000",
-        credit: f.bank.code,
+        desc: transferDesc,
+        debit: stagingBankCode,
+        credit: fundBankAcct,
         amount: amt,
       });
       postCashflow({
         date,
         type: "receipt",
-        bucket: `Transfer from ${code}`,
+        bucket: transferBucket,
         amount: amt,
         fund: code,
+        note: narr,
+      });
+
+      postJ({
+        date,
+        fund: code,
+        desc: expenseLabel,
+        debit: expenseAcct,
+        credit: stagingBankCode,
+        amount: amt,
+      });
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: expenseLabel,
+        amount: amt,
+        fund: code,
+        note: narr,
       });
     }
     alert("Payment posted.");
@@ -1630,6 +1956,19 @@ function attachAdjustmentsHandlers() {
     EXT_PAYABLE: "2400",
   };
   const acct = (code) => coa.find((a) => a.code === code) || { code, name: "(?)" };
+  const generalFund = funds.find((f) => f.code === "GEN") || funds[0] || null;
+  const generalBankAcct =
+    (generalFund &&
+      coa.find(
+        (a) =>
+          a.fund === generalFund.code &&
+          String(a.code || "").trim().startsWith("11") &&
+          a.type === ACCT_TYPES.ASSET
+      )) ||
+    null;
+  const generalFundBankCode =
+    (generalBankAcct && String(generalBankAcct.code || "").trim()) || null;
+  const operatingBankCode = getGeneralOperatingBankCode();
 
   const removeJournalByTag = (tagId) => {
     const j = loadJSON(JOURNAL_KEY).filter((x) => x._tag !== tagId);
@@ -1753,9 +2092,10 @@ function attachAdjustmentsHandlers() {
       if (!creditCode) return alert("General Fund equity not found.");
       desc = narrText || `OB — Cash on Hand`;
     } else if (preset === "OPER_BANK") {
-      const gen = funds.find((f) => f.code === "GEN") || funds[0];
+      const gen = generalFund || funds[0];
+      if (!gen) return alert("No funds configured.");
       const fEquity = coa.find((a) => a.fund === gen.code && a.type === "Fund Equity");
-      debitCode = "1000";
+      debitCode = generalFundBankCode || operatingBankCode;
       creditCode = fEquity?.code;
       if (!creditCode) return alert("General Fund equity not found.");
       desc = narrText || `OB — Operating Bank`;
@@ -1950,8 +2290,35 @@ function attachReportsHandlers() {
     new Date(d.getFullYear(), d.getMonth(), d.getDate())
       .toISOString()
       .slice(0, 10);
-  rFrom.value = iso(firstOfMonth);
-  rTo.value = iso(today);
+
+  const dateCandidates = [];
+  const pushDate = (value) => {
+    if (!value) return;
+    const str = String(value).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) dateCandidates.push(str);
+  };
+  loadJSON(JOURNAL_KEY, []).forEach((row) => pushDate(row?.date));
+  loadCashflow().forEach((row) => pushDate(row?.date));
+  const sortedDates = dateCandidates.sort();
+  if (sortedDates.length) {
+    rFrom.value = sortedDates[0];
+    rTo.value = sortedDates[sortedDates.length - 1];
+  } else {
+    rFrom.value = iso(firstOfMonth);
+    rTo.value = iso(today);
+  }
+
+  const ensureRangeOrder = () => {
+    const fromVal = rFrom.value;
+    const toVal = rTo.value;
+    if (fromVal && toVal && fromVal > toVal) {
+      rFrom.value = toVal;
+      rTo.value = fromVal;
+    }
+    return { fromISO: rFrom.value, toISO: rTo.value };
+  };
+
+  ensureRangeOrder();
 
   const showTab = (showTB, showCF, showIS, showBS, showFund) => {
     tbSection.style.display = showTB ? "" : "none";
@@ -1984,7 +2351,7 @@ function attachReportsHandlers() {
 
   const coa = () => loadJSON(COA_KEY).sort((a, b) => a.code.localeCompare(b.code));
   const journal = () => loadJSON(JOURNAL_KEY);
-  const cfRows = () => loadCashflow();
+  const cfRows = () => ensureCashflowIntegrity();
 
   const sortedFunds = () =>
     loadJSON(FUNDS_KEY, [])
@@ -2020,8 +2387,7 @@ function attachReportsHandlers() {
     if (!fundLedgerBody || !fundLedgerFundSel || !fundLedgerAccountSel) return;
     const fundCode = fundLedgerFundSel.value;
     const acctCode = fundLedgerAccountSel.value;
-    const fromISO = rFrom.value;
-    const toISO = rTo.value;
+    const { fromISO, toISO } = ensureRangeOrder();
 
     fundLedgerBody.innerHTML = "";
 
@@ -2204,17 +2570,25 @@ function attachReportsHandlers() {
 
   function slicePeriods(fromISO, toISO, calendar, monthly) {
     const out = [];
-    const fromDate = parseISO(fromISO);
-    const end = parseISO(toISO);
-    if (fromDate > end) return out;
+    if (!fromISO || !toISO) return out;
+    let fromDate = parseISO(fromISO);
+    let end = parseISO(toISO);
+    if (Number.isNaN(fromDate?.getTime()) || Number.isNaN(end?.getTime())) return out;
+    if (fromDate > end) {
+      const tmp = fromDate;
+      fromDate = end;
+      end = tmp;
+    }
     let d = new Date(fromDate);
 
     if (!monthly) {
+      const startISO = iso(fromDate);
+      const endISO = iso(end);
       out.push({
-        key: `ALL:${fromISO}:${toISO}:${calendar}`,
-        label: `${fromISO} → ${toISO}`,
-        start: fromISO,
-        end: toISO,
+        key: `ALL:${startISO}:${endISO}:${calendar}`,
+        label: `${startISO} → ${endISO}`,
+        start: startISO,
+        end: endISO,
       });
       return out;
     }
@@ -2346,7 +2720,8 @@ function attachReportsHandlers() {
   }
   function runTB() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderTB(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderTB(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
 
   // ===== CF =====
@@ -2481,7 +2856,8 @@ function attachReportsHandlers() {
   }
   function runCF() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderCF(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderCF(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
 
   // ===== IS (Per-Fund / Consolidated) =====
@@ -2618,7 +2994,8 @@ function attachReportsHandlers() {
   }
   function runIS() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderIS(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderIS(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
   isViewSel?.addEventListener("change", runIS);
 
@@ -2773,12 +3150,14 @@ function attachReportsHandlers() {
   function runBS() {
     if (!bsContainer) return;
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderBS(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderBS(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
 
   // Form submit runs current tab
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    ensureRangeOrder();
     if (tbSection.style.display !== "none") runTB();
     else if (cfSection.style.display !== "none") runCF();
     else if (isSection.style.display !== "none") runIS();
