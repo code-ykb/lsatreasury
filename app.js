@@ -1880,6 +1880,8 @@ function attachTransactionsHandlers() {
         .forEach((r) => {
           const d = acctByCode(r.debit);
           const c = acctByCode(r.credit);
+          const tag = r._tag || "";
+          const amount = Number(r.amount) || 0;
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td>${escapeHtml(r.date || "")}</td>
@@ -1891,8 +1893,14 @@ function attachTransactionsHandlers() {
             <td>${escapeHtml(
               c ? `${c.code} ${c.name}` : r.credit || ""
             )}</td>
-            <td style="text-align:right;">${Number(r.amount).toFixed(2)}</td>
-            <td></td>`;
+            <td style="text-align:right;">${amount.toFixed(2)}</td>
+            <td class="actions">${
+              tag
+                ? `<button class="rowbtn danger" data-action="delete" data-tag="${escapeHtml(
+                    tag
+                  )}" data-date="${escapeHtml(r.date || "")}" data-kind="transaction"><i class="fa-solid fa-trash-can"></i> Delete</button>`
+                : '<span style="color:var(--text-muted); font-size:12px;">Unavailable</span>'
+            }</td>`;
           tb.appendChild(tr);
         });
       return;
@@ -1939,7 +1947,9 @@ function attachTransactionsHandlers() {
         <td class="actions">
           <button class="rowbtn danger" data-action="delete" data-id="${escapeHtml(
             txn.id
-          )}"><i class="fa-solid fa-trash-can"></i> Delete</button>
+          )}" data-tag="${escapeHtml(txn.id)}" data-date="${escapeHtml(
+            txn.date || ""
+          )}" data-kind="${escapeHtml(txn.category || "transaction")}"><i class="fa-solid fa-trash-can"></i> Delete</button>
         </td>`;
       tb.appendChild(tr);
     });
@@ -1949,21 +1959,34 @@ function attachTransactionsHandlers() {
   document.getElementById("recentTable")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action='delete']");
     if (!btn) return;
-    const id = btn.dataset.id;
-    if (!id) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
     const txns = readTransactions();
-    const txn = txns.find((t) => t.id === id);
-    if (!txn) return;
-    const friendlyType = txn.category === "payment" ? "payment" : "transaction";
-    const prompt = `Delete ${friendlyType} dated ${txn.date || "(no date)"}? This action will remove it from all reports.`;
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
     if (!confirm(prompt)) return;
 
-    const remaining = txns.filter((t) => t.id !== id);
-    saveTransactions(remaining);
-    removeJournalByTag(id);
-    removeCashflowByTag(id);
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
     const ledgerRows = clLoad();
-    const keptLedger = ledgerRows.filter((row) => row._tag !== id);
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
     if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
     alert("Transaction deleted.");
     renderRecent();
