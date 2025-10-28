@@ -2121,6 +2121,117 @@ function attachTransactionsHandlers() {
     if (typeof renderStatement === "function") renderStatement();
   });
 
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
+    const ledgerRows = clLoad();
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
+    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
+
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
+    const ledgerRows = clLoad();
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
+    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
+
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
+    const ledgerRows = clLoad();
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
+    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
+
   // ----- Statements (strict believer filter + print) -----
   const stmtForm = document.getElementById("stmtForm"),
     sBeliever = document.getElementById("sBeliever"),
