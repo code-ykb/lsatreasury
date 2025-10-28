@@ -314,6 +314,47 @@ const fundFromAccount = (code) => {
   const fund = typeof acct.fund === "string" ? acct.fund.trim() : "";
   return fund || null;
 };
+
+const getGeneralFund = () => {
+  const funds = loadJSON(FUNDS_KEY, []);
+  if (!Array.isArray(funds) || funds.length === 0) return null;
+  return funds.find((f) => f.code === "GEN") || funds[0] || null;
+};
+
+const getGeneralFundBankAccount = () => {
+  const general = getGeneralFund();
+  if (!general) return null;
+  const coa = loadJSON(COA_KEY, []);
+  return (
+    coa.find(
+      (acct) =>
+        acct.fund === general.code &&
+        acct.type === ACCT_TYPES.ASSET &&
+        String(acct.code || "").trim().startsWith("11")
+    ) || null
+  );
+};
+
+const getOperatingBankAccount = () => {
+  const coa = loadJSON(COA_KEY, []);
+  const normalized = (code) => (code === null || code === undefined ? "" : String(code).trim());
+  const explicit = coa.find((acct) => normalized(acct.code) === "1000");
+  if (explicit) return explicit;
+  const unfundedCash = coa.find(
+    (acct) =>
+      acct &&
+      !acct.fund &&
+      acct.type === ACCT_TYPES.ASSET &&
+      normalized(acct.code).startsWith("10")
+  );
+  if (unfundedCash) return unfundedCash;
+  return getGeneralFundBankAccount();
+};
+
+const getGeneralOperatingBankCode = () => {
+  const acct = getOperatingBankAccount();
+  return (acct && String(acct.code || "").trim()) || "1000";
+};
 const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
   const hint = typeof fundHint === "string" ? fundHint.trim() : "";
   if (hint) return hint;
@@ -330,10 +371,23 @@ const deriveFundForEntry = (fundHint, debitCode, creditCode) => {
   const funds = loadJSON(FUNDS_KEY, []);
   const general = funds.find((f) => f.code === "GEN");
   const normalizeCode = (code) => (code === null || code === undefined ? "" : String(code).trim());
-  const isGeneralCash = (code) => {
-    const c = normalizeCode(code);
-    return c === "1000" || c === "1010";
-  };
+  const generalCashCodes = (() => {
+    const base = new Set(["1000", "1010"]);
+    if (!general) return base;
+    const coa = loadJSON(COA_KEY, []);
+    coa.forEach((acct) => {
+      if (
+        acct &&
+        acct.fund === general.code &&
+        acct.type === ACCT_TYPES.ASSET &&
+        String(acct.code || "").trim().startsWith("11")
+      ) {
+        base.add(String(acct.code).trim());
+      }
+    });
+    return base;
+  })();
+  const isGeneralCash = (code) => generalCashCodes.has(normalizeCode(code));
 
   if (general && (isGeneralCash(debitCode) || isGeneralCash(creditCode))) {
     return general.code;
@@ -895,6 +949,10 @@ function attachTransactionsHandlers() {
       expense: coa.find((a) => a.fund === code && a.type === ACCT_TYPES.EXPENSE),
     };
   };
+  const generalFund = funds.find((f) => f.code === "GEN") || funds[0] || null;
+  const generalFundAccounts = generalFund ? fundAccounts(generalFund.code) : null;
+  const generalFundBankCode = generalFundAccounts?.bank?.code || null;
+  const operatingBankCode = getGeneralOperatingBankCode();
   const loadJournal = () => loadJSON(JOURNAL_KEY);
   const saveJournal = (v) => saveJSON(JOURNAL_KEY, v);
   const clLoad = () => loadJSON(CONTRIB_LEDGER_KEY);
@@ -1062,13 +1120,16 @@ function attachTransactionsHandlers() {
       });
       if (believerId) addCL(date, believerId, null, v, amt, note);
     } else if (v === "DIR_GEN") {
-      const gen = funds.find((f) => f.code === "GEN") || funds[0];
-      const { income } = fundAccounts(gen.code);
+      const gen = generalFund || funds[0];
+      if (!gen) return alert("No funds configured.");
+      const { income, bank } = fundAccounts(gen.code);
+      if (!income) return alert("General Fund income account not found.");
+      const debitCode = (bank && bank.code) || operatingBankCode;
       postJ({
         date,
         fund: gen.code,
         desc: desc[v],
-        debit: GL.CASH_BANK_OP,
+        debit: debitCode,
         credit: income.code,
         amount: amt,
       });
@@ -1087,7 +1148,7 @@ function attachTransactionsHandlers() {
         date,
         fund,
         desc: desc[v],
-        debit: GL.CASH_BANK_OP,
+        debit: operatingBankCode,
         credit: income.code,
         amount: amt,
       });
@@ -1103,7 +1164,7 @@ function attachTransactionsHandlers() {
         fund,
         desc: `Transfer to ${bank.name}`,
         debit: bank.code,
-        credit: GL.CASH_BANK_OP,
+        credit: operatingBankCode,
         amount: amt,
       });
       postCashflow({
@@ -1120,7 +1181,7 @@ function attachTransactionsHandlers() {
         date,
         fund: "SPECIAL",
         desc: d,
-        debit: GL.CASH_BANK_OP,
+        debit: operatingBankCode,
         credit: GL.SPECIAL_HELD,
         amount: amt,
       });
@@ -1157,7 +1218,7 @@ function attachTransactionsHandlers() {
         date,
         fund: "EXTERNAL",
         desc: d,
-        debit: GL.CASH_BANK_OP,
+        debit: operatingBankCode,
         credit: GL.EXT_PAYABLE,
         amount: amt,
       });
@@ -1213,15 +1274,21 @@ function attachTransactionsHandlers() {
     if (!date) return alert("Select date.");
     if (!(amt > 0)) return alert("Enter a positive amount.");
     if (!narr) return alert("Enter narration.");
-    const gen = funds.find((f) => f.code === "GEN") || funds[0];
+    const gen = generalFund || funds[0];
     const fa = (code) => fundAccounts(code);
     if (v === "PAY_GEN_BANK") {
+      if (!gen) return alert("No funds configured.");
+      const accounts = fa(gen.code);
+      const expenseAcct = accounts?.expense?.code;
+      if (!expenseAcct) return alert("General Fund expense account not found.");
+      const creditAccount =
+        accounts?.bank?.code || generalFundBankCode || operatingBankCode;
       postJ({
         date,
         fund: gen.code,
         desc: `Expense — General Fund — ${narr}`,
-        debit: fa(gen.code).expense.code,
-        credit: "1000",
+        debit: expenseAcct,
+        credit: creditAccount,
         amount: amt,
       });
       postCashflow({
@@ -1249,36 +1316,81 @@ function attachTransactionsHandlers() {
       });
     } else if (v === "PAY_EARMARK") {
       const code = pFund.value;
+      if (!code) return alert("Select a fund.");
+      if (generalFund && code === generalFund.code) {
+        const accounts = fa(code);
+        const expenseAcct = accounts?.expense?.code;
+        if (!expenseAcct)
+          return alert("General Fund expense account not found.");
+        const creditAccount =
+          accounts?.bank?.code || generalFundBankCode || operatingBankCode;
+        const label = `Expense — General Fund — ${narr}`;
+        postJ({
+          date,
+          fund: code,
+          desc: label,
+          debit: expenseAcct,
+          credit: creditAccount,
+          amount: amt,
+        });
+        postCashflow({
+          date,
+          type: "outgoing",
+          bucket: label,
+          amount: amt,
+          fund: code,
+        });
+        return;
+      }
+
       const f = fa(code);
+      const expenseAcct = f?.expense?.code;
+      const fundBankAcct = f?.bank?.code;
+      if (!expenseAcct || !fundBankAcct)
+        return alert("Selected fund is missing bank or expense accounts.");
+
+      const fundInfo = funds.find((fund) => fund.code === code) || null;
+      const fundName = fundInfo?.name || code;
+      const stagingBankCode = generalFundBankCode || operatingBankCode;
+      const stagingBank = acctByCode(stagingBankCode);
+      const transferDesc = `Transfer from ${fundName} to ${
+        stagingBank?.name || stagingBankCode
+      }`;
+      const transferBucket = `Transfer from ${fundName}`;
+      const expenseLabel = `Expense — ${fundName} — ${narr}`;
+
       postJ({
         date,
         fund: code,
-        desc: `Expense — ${code} — ${narr}`,
-        debit: f.expense.code,
-        credit: "1000",
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: `Expense — ${code} — ${narr}`,
-        amount: amt,
-        fund: code,
-      });
-      postJ({
-        date,
-        fund: code,
-        desc: `Transfer from ${f.bank.name}`,
-        debit: "1000",
-        credit: f.bank.code,
+        desc: transferDesc,
+        debit: stagingBankCode,
+        credit: fundBankAcct,
         amount: amt,
       });
       postCashflow({
         date,
         type: "receipt",
-        bucket: `Transfer from ${code}`,
+        bucket: transferBucket,
         amount: amt,
         fund: code,
+        note: narr,
+      });
+
+      postJ({
+        date,
+        fund: code,
+        desc: expenseLabel,
+        debit: expenseAcct,
+        credit: stagingBankCode,
+        amount: amt,
+      });
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: expenseLabel,
+        amount: amt,
+        fund: code,
+        note: narr,
       });
     }
     alert("Payment posted.");
@@ -1630,6 +1742,19 @@ function attachAdjustmentsHandlers() {
     EXT_PAYABLE: "2400",
   };
   const acct = (code) => coa.find((a) => a.code === code) || { code, name: "(?)" };
+  const generalFund = funds.find((f) => f.code === "GEN") || funds[0] || null;
+  const generalBankAcct =
+    (generalFund &&
+      coa.find(
+        (a) =>
+          a.fund === generalFund.code &&
+          String(a.code || "").trim().startsWith("11") &&
+          a.type === ACCT_TYPES.ASSET
+      )) ||
+    null;
+  const generalFundBankCode =
+    (generalBankAcct && String(generalBankAcct.code || "").trim()) || null;
+  const operatingBankCode = getGeneralOperatingBankCode();
 
   const removeJournalByTag = (tagId) => {
     const j = loadJSON(JOURNAL_KEY).filter((x) => x._tag !== tagId);
@@ -1753,9 +1878,10 @@ function attachAdjustmentsHandlers() {
       if (!creditCode) return alert("General Fund equity not found.");
       desc = narrText || `OB — Cash on Hand`;
     } else if (preset === "OPER_BANK") {
-      const gen = funds.find((f) => f.code === "GEN") || funds[0];
+      const gen = generalFund || funds[0];
+      if (!gen) return alert("No funds configured.");
       const fEquity = coa.find((a) => a.fund === gen.code && a.type === "Fund Equity");
-      debitCode = "1000";
+      debitCode = generalFundBankCode || operatingBankCode;
       creditCode = fEquity?.code;
       if (!creditCode) return alert("General Fund equity not found.");
       desc = narrText || `OB — Operating Bank`;
