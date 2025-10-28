@@ -649,9 +649,16 @@ const buildCashflowEntry = ({ date, debit, credit, amount, desc, fund = "", note
 };
 
 const syncTaggedArtifacts = (row, source) => {
-  if (!row || row.id === null || row.id === undefined) return row;
+  if (!row) return row;
 
-  const tag = String(row.id).trim();
+  const normalizedSource = source || row._src || "MANUAL";
+  let tagCandidate =
+    row.id ?? row._tag ?? row.tag ?? (typeof row.uuid === "string" ? row.uuid : null);
+  if (tagCandidate === null || tagCandidate === undefined || tagCandidate === "") {
+    tagCandidate = `${normalizedSource || "LEG"}-${uuid()}`;
+  }
+
+  const tag = String(tagCandidate).trim();
   if (!tag) return row;
 
   const dateISO = row.date === null || row.date === undefined ? "" : String(row.date).trim();
@@ -660,8 +667,10 @@ const syncTaggedArtifacts = (row, source) => {
   const rawAmount = Number(row.amount);
   const hasAmount = Number.isFinite(rawAmount) && rawAmount !== 0;
   const amount = hasAmount ? rawAmount : 0;
-  const baseDesc = row.desc ?? row.narr ?? `${source} entry`;
-  const desc = (baseDesc === null || baseDesc === undefined ? `${source} entry` : String(baseDesc)).trim() || `${source} entry`;
+  const baseDesc = row.desc ?? row.narr ?? `${normalizedSource} entry`;
+  const desc =
+    (baseDesc === null || baseDesc === undefined ? `${normalizedSource} entry` : String(baseDesc)).trim() ||
+    `${normalizedSource} entry`;
   const baseNote = row.note ?? row.narr ?? row.desc ?? desc;
   const note = (baseNote === null || baseNote === undefined ? desc : String(baseNote)).trim() || desc;
   const fundHint = typeof row.fund === "string" ? row.fund.trim() : "";
@@ -678,13 +687,32 @@ const syncTaggedArtifacts = (row, source) => {
     credit,
     amount,
     fund: derivedFund || "",
+    _tag: tag,
+    _src: normalizedSource,
   };
 
-  const pruneByTag = (entries) => entries.filter((entry) => entry && entry._tag !== tag);
+  const pruneJournal = (entries) =>
+    entries.filter((entry) => {
+      if (!entry) return false;
+      if (entry._tag === tag) return false;
+      if (
+        !entry._tag &&
+        entry.date === dateISO &&
+        entry.debit === debit &&
+        entry.credit === credit &&
+        Number(entry.amount) === amount &&
+        (entry.fund || "") === (derivedFund || "") &&
+        (entry.desc || "") === desc &&
+        (entry.note || "") === note
+      ) {
+        return false;
+      }
+      return true;
+    });
 
   let journal = loadJSON(JOURNAL_KEY, []);
   const originalJournalLen = journal.length;
-  journal = pruneByTag(journal);
+  journal = pruneJournal(journal);
   if (valid) {
     journal.push({
       date: dateISO,
@@ -694,7 +722,7 @@ const syncTaggedArtifacts = (row, source) => {
       credit,
       amount,
       _tag: tag,
-      _src: source,
+      _src: normalizedSource,
     });
   }
   if (journal.length !== originalJournalLen || valid) {
@@ -703,7 +731,6 @@ const syncTaggedArtifacts = (row, source) => {
 
   let cashflow = loadCashflow();
   const originalCashflowLen = cashflow.length;
-  cashflow = pruneByTag(cashflow);
   let skipCashflow = false;
   if (valid && source === "OB") {
     const debitIsCash = isCashLikeAccount(debit);
@@ -719,17 +746,28 @@ const syncTaggedArtifacts = (row, source) => {
       if (cashFund) skipCashflow = true;
     }
   }
-  if (!skipCashflow && valid) {
-    const cfEntry = buildCashflowEntry({
-      date: dateISO,
-      debit,
-      credit,
-      amount,
-      desc,
-      fund: derivedFund || "",
-      note,
+  const targetCfEntry =
+    !skipCashflow && valid
+      ? buildCashflowEntry({
+          date: dateISO,
+          debit,
+          credit,
+          amount,
+          desc,
+          fund: derivedFund || "",
+          note,
+        })
+      : null;
+  const pruneCashflow = (entries) =>
+    entries.filter((entry) => {
+      if (!entry) return false;
+      if (entry._tag === tag) return false;
+      if (!entry._tag && targetCfEntry && cashflowRowsEqual(entry, targetCfEntry)) return false;
+      return true;
     });
-    if (cfEntry) cashflow.push({ ...cfEntry, _tag: tag, _src: source });
+  cashflow = pruneCashflow(cashflow);
+  if (!skipCashflow && valid && targetCfEntry) {
+    cashflow.push({ ...targetCfEntry, _tag: tag, _src: normalizedSource });
   }
   if (cashflow.length !== originalCashflowLen || valid) {
     saveCashflow(cashflow);
@@ -748,7 +786,7 @@ const syncTaggedEntryCollections = () => {
     const normalized = rows.map((row) => {
       const copy = { ...row };
       const result = syncTaggedArtifacts(copy, source);
-      const fieldsToCheck = ["date", "desc", "debit", "credit", "amount", "fund", "note"];
+      const fieldsToCheck = ["id", "_tag", "_src", "date", "desc", "debit", "credit", "amount", "fund", "note"];
       if (
         !mutated &&
         fieldsToCheck.some((field) => (row?.[field] ?? "") !== (result?.[field] ?? ""))
@@ -1955,6 +1993,43 @@ function attachTransactionsHandlers() {
     });
   }
   renderRecent();
+
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
+    const ledgerRows = clLoad();
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
+    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
 
   document.getElementById("recentTable")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action='delete']");
