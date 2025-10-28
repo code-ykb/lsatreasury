@@ -1915,28 +1915,33 @@ function attachTransactionsHandlers() {
       journal
         .slice(-20)
         .reverse()
-        .forEach((r) => {
-          const d = acctByCode(r.debit);
-          const c = acctByCode(r.credit);
-          const tag = r._tag || "";
-          const amount = Number(r.amount) || 0;
+        .forEach((rawRow) => {
+          const normalized =
+            rawRow && rawRow._tag
+              ? rawRow
+              : syncTaggedArtifacts({ ...(rawRow || {}) }, rawRow?._src || "LEGACY");
+          const row = normalized || rawRow || {};
+          const d = acctByCode(row.debit);
+          const c = acctByCode(row.credit);
+          const tag = row._tag || "";
+          const amount = Number(row.amount) || 0;
           const tr = document.createElement("tr");
           tr.innerHTML = `
-            <td>${escapeHtml(r.date || "")}</td>
-            <td>${escapeHtml(r.fund || "")}</td>
-            <td>${escapeHtml(r.desc || "")}</td>
+            <td>${escapeHtml(row.date || "")}</td>
+            <td>${escapeHtml(row.fund || "")}</td>
+            <td>${escapeHtml(row.desc || "")}</td>
             <td>${escapeHtml(
-              d ? `${d.code} ${d.name}` : r.debit || ""
+              d ? `${d.code} ${d.name}` : row.debit || ""
             )}</td>
             <td>${escapeHtml(
-              c ? `${c.code} ${c.name}` : r.credit || ""
+              c ? `${c.code} ${c.name}` : row.credit || ""
             )}</td>
             <td style="text-align:right;">${amount.toFixed(2)}</td>
             <td class="actions">${
               tag
                 ? `<button class="rowbtn danger" data-action="delete" data-tag="${escapeHtml(
                     tag
-                  )}" data-date="${escapeHtml(r.date || "")}" data-kind="transaction"><i class="fa-solid fa-trash-can"></i> Delete</button>`
+                  )}" data-date="${escapeHtml(row.date || "")}" data-kind="transaction"><i class="fa-solid fa-trash-can"></i> Delete</button>`
                 : '<span style="color:var(--text-muted); font-size:12px;">Unavailable</span>'
             }</td>`;
           tb.appendChild(tr);
@@ -1993,6 +1998,43 @@ function attachTransactionsHandlers() {
     });
   }
   renderRecent();
+
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
+    const ledgerRows = clLoad();
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
+    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
 
   document.getElementById("recentTable")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action='delete']");
