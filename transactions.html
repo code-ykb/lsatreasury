@@ -11,13 +11,7 @@
   <!-- Top bar -->
   <div class="topbar">
     <div class="brand-mark">LSA</div>
-    <div class="brand-title">Treasury — Transactions</div>
-    <div style="margin-left:auto; font-size:14px; display:flex; align-items:center; gap:10px;">
-      <span style="padding:4px 8px; border:1px solid #e5e7eb; border-radius:6px; background:#f9fafb; font-weight:600;">
-        Currency: MUR (Rs)
-      </span>
-      Signed in as <strong id="whoami"></strong>
-    </div>
+    <div class="brand-title">Treasury Workspace</div>
   </div>
 
   <div class="dash-wrap">
@@ -26,36 +20,47 @@
         <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
         <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
         <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
-        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice"></i> Transactions</a>
+        <a class="navlink active" href="transactions.html"><i class="fa-solid fa-file-invoice"></i> Transactions</a>
         <a class="navlink" href="reports.html"><i class="fa-solid fa-chart-line"></i> Reports</a>
-       <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
-       <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments & OB</a>
         <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
       </nav>
     </aside>
 
     <main class="main">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Transactions</h1>
+          <p class="page-subtitle">Post contributions, process payments, and keep statements tidy.</p>
+        </div>
+        <div class="header-meta">
+          <span class="chip">Currency: MUR (Rs)</span>
+          <span>Signed in as <strong id="whoami"></strong></span>
+        </div>
+      </div>
+
       <!-- Tabs -->
-      <div class="card" style="margin-bottom:16px;">
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <div class="card">
+        <div class="tab-bar">
           <button class="btn-secondary" id="tabContrib">Contributions</button>
           <button class="btn-secondary" id="tabPayments">Payments</button>
           <button class="btn-secondary" id="tabTransfers">Transfers</button>
           <button class="btn-secondary" id="tabStatements">Statements</button>
-          <button class="btn-secondary" onclick="alert('Adjustments coming next');">Adjustments</button>
-          <button class="btn-secondary" onclick="alert('Opening Balances coming next');">Opening Balances</button>
+          <button class="btn-secondary" type="button" onclick="alert('Adjustments coming next');">Adjustments</button>
+          <button class="btn-secondary" type="button" onclick="alert('Opening Balances coming next');">Opening Balances</button>
         </div>
       </div>
 
       <!-- Contributions -->
       <section id="contribSection">
         <h2>Contributions</h2>
-        <p>Post contributions like a teller. Amounts in <strong>Rs</strong>. You may tag the contributor for statement purposes.</p>
+        <p>Post contributions like a teller. Amounts in <strong>Rs</strong>. Tag the believer for statements when needed.</p>
 
-        <div class="card" style="margin-bottom:16px;">
+        <div class="card">
           <form id="contribForm">
             <div class="grid2">
-              <div class="form-row" style="grid-column:1 / -1;">
+              <div class="form-row span-all">
                 <label>Contribution Type</label>
                 <select id="cType">
                   <option value="MEET_GEN">Contribution Meeting — General Fund (Cash)</option>
@@ -90,13 +95,13 @@
                 <select id="cBeliever"></select>
               </div>
 
-              <div class="form-row" id="narrRow" style="grid-column:1 / -1; display:none;">
+              <div class="form-row span-all" id="narrRow" style="display:none;">
                 <label for="cNarr">Narration (for Special / External)</label>
                 <input id="cNarr" type="text" placeholder="e.g. Purchase of Chairs / NSA Shrine of ‘Abdu’l-Bahá"/>
               </div>
             </div>
 
-            <div style="display:flex; gap:8px; margin-top:10px;">
+            <div class="btn-group" style="margin-top:12px;">
               <button class="btn-primary" type="submit">Post</button>
               <button class="btn-secondary" id="cClear" type="button">Clear</button>
             </div>
@@ -107,12 +112,12 @@
       <!-- Payments -->
       <section id="paymentsSection" style="display:none;">
         <h2>Payments (Expenses)</h2>
-        <p>For <strong>Earmarked Fund</strong> expenses, the system auto-posts an internal transfer from that fund so Cash Flow shows “Transfer from [Fund]”.</p>
+        <p>For <strong>Earmarked Fund</strong> expenses, the system auto-posts an internal transfer so Cash Flow shows “Transfer from [Fund]”.</p>
 
-        <div class="card" style="margin-bottom:16px;">
+        <div class="card">
           <form id="payForm">
             <div class="grid2">
-              <div class="form-row" style="grid-column:1 / -1;">
+              <div class="form-row span-all">
                 <label>Payment Type</label>
                 <select id="pType">
                   <option value="PAY_GEN_BANK">Payment — General Fund (Bank)</option>
@@ -136,13 +141,13 @@
                 <select id="pFund"></select>
               </div>
 
-              <div class="form-row" style="grid-column:1 / -1;">
+              <div class="form-row span-all">
                 <label for="pNarr">Narration / Payee</label>
                 <input id="pNarr" type="text" placeholder="e.g. Hall rental / Utilities / Payee name"/>
               </div>
             </div>
 
-            <div style="display:flex; gap:8px; margin-top:10px;">
+            <div class="btn-group" style="margin-top:12px;">
               <button class="btn-primary" type="submit">Post</button>
               <button class="btn-secondary" id="pClear" type="button">Clear</button>
             </div>
@@ -155,10 +160,10 @@
         <h2>Transfers</h2>
         <p>Move funds internally with automatic GL and Cash Flow.</p>
 
-        <div class="card" style="margin-bottom:16px;">
+        <div class="card">
           <form id="trForm">
             <div class="grid2">
-              <div class="form-row" style="grid-column:1 / -1;">
+              <div class="form-row span-all">
                 <label>Transfer Type</label>
                 <select id="tType">
                   <optgroup label="Cash & Operating Bank">
@@ -199,13 +204,13 @@
                 </select>
               </div>
 
-              <div class="form-row" style="grid-column:1 / -1;">
+              <div class="form-row span-all">
                 <label for="tNarr">Narration</label>
                 <input id="tNarr" type="text" placeholder="e.g. Deposit slip #, transfer reason"/>
               </div>
             </div>
 
-            <div style="display:flex; gap:8px; margin-top:10px;">
+            <div class="btn-group" style="margin-top:12px;">
               <button class="btn-primary" type="submit">Post</button>
               <button class="btn-secondary" id="tClear" type="button">Clear</button>
             </div>
@@ -218,7 +223,7 @@
         <h2>Contribution Statements</h2>
         <p>Select a believer and period. Export CSV or use the bank-style print.</p>
 
-        <div class="card" style="margin-bottom:16px;">
+        <div class="card">
           <form id="stmtForm">
             <div class="grid2">
               <div class="form-row">
@@ -234,25 +239,19 @@
                 <input id="sTo" type="date" required/>
               </div>
             </div>
-            <div style="display:flex; gap:8px; margin-top:10px;">
+            <div class="btn-group" style="margin-top:12px;">
               <button class="btn-primary" type="submit">Show</button>
               <button class="btn-secondary" id="sExport" type="button"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
               <button class="btn-secondary" id="sPrint" type="button"><i class="fa-solid fa-print"></i> Print</button>
               <button class="btn-secondary danger" id="sCleanup" type="button" title="Remove incorrectly tagged rows for the selected believer and period">Clear tags in range</button>
-              <button class="btn-secondary danger" id="sClearAll" type="button"
-              <button class="btn-secondary danger" id="sClearLedger" type="button" title="Delete ALL rows from the Contribution Ledger (all believers, all dates)">
-  <i class="fa-solid fa-trash-can"></i> Clear ALL Statements
-</button>
-
-  title="Remove ALL tagged rows for this believer (any date)">
-  Clear ALL for believer
-</button>
+              <button class="btn-secondary danger" id="sClearAll" type="button" title="Remove ALL tagged rows for this believer (any date)">Clear ALL for believer</button>
+              <button class="btn-secondary danger" id="sClearLedger" type="button" title="Delete ALL rows from the Contribution Ledger (all believers, all dates)"><i class="fa-solid fa-trash-can"></i> Clear ALL Statements</button>
             </div>
           </form>
         </div>
 
         <div class="card" id="stmtCard">
-          <div id="stmtHeader" style="margin-bottom:10px; font-weight:600;"></div>
+          <div id="stmtHeader" class="statement-header"></div>
           <div class="table-wrap">
             <table class="table" id="stmtTable">
               <thead>
@@ -275,18 +274,19 @@
           </div>
         </div>
       </section>
-      <button class="btn-secondary danger" id="sClearLedger" type="button">
-  Clear ALL Statements (Contribution Ledger)
-</button>
-
-      <!-- Recent Journal -->
+      <!-- Recent Activity -->
       <div class="card">
-        <h3 style="margin-top:0;">Recent Journal (latest 20)</h3>
+        <h3>Recent activity (latest 20)</h3>
         <div class="table-wrap">
           <table class="table" id="recentTable">
             <thead>
               <tr>
-                <th>Date</th><th>Fund</th><th>Description</th><th>Debit</th><th>Credit</th><th style="text-align:right;">Amount (Rs)</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Fund</th>
+                <th>Details</th>
+                <th style="text-align:right;">Amount (Rs)</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody><!-- injected --></tbody>
