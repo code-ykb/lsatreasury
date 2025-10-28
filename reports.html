@@ -76,6 +76,7 @@
         <button id="tabCF" class="btn-secondary">Cash Flow</button>
         <button id="tabIS" class="btn-secondary">Income Statement</button>
         <button id="tabBS" class="btn-secondary">Balance Sheet</button>
+        <button id="tabFund" class="btn-secondary">Fund Accounts</button>
       </div>
 
       <!-- Trial Balance -->
@@ -116,6 +117,40 @@
         <h3 style="margin-top:0;">Balance Sheet</h3>
         <div id="bsMeta" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
         <div id="bsContainer"><!-- balance sheet table injects here --></div>
+      </section>
+
+      <!-- Fund Accounts -->
+      <section id="fundSection" class="card" style="display:none;">
+        <h3 style="margin-top:0;">Fund Account Ledger</h3>
+        <div class="grid2" style="margin-bottom:8px;">
+          <div class="form-row">
+            <label for="fundLedgerFund">Fund</label>
+            <select id="fundLedgerFund"></select>
+          </div>
+          <div class="form-row">
+            <label for="fundLedgerAccount">Account</label>
+            <select id="fundLedgerAccount"></select>
+          </div>
+        </div>
+        <div id="fundLedgerMeta" style="font-size:12px;color:#6b7280;margin-bottom:8px;"></div>
+        <div class="table-wrap">
+          <table class="table" id="fundLedgerTable">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Debit (Rs)</th>
+                <th>Credit (Rs)</th>
+                <th>Balance (Rs)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colspan="5" style="text-align:center;color:#6b7280;">Select a fund and account to view activity.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>

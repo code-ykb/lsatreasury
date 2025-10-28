@@ -424,7 +424,22 @@ const syncTaggedArtifacts = (row, source) => {
   let cashflow = loadCashflow();
   const originalCashflowLen = cashflow.length;
   cashflow = pruneByTag(cashflow);
-  if (valid) {
+  let skipCashflow = false;
+  if (valid && source === "OB") {
+    const debitIsCash = isCashLikeAccount(debit);
+    const creditIsCash = isCashLikeAccount(credit);
+    const cashSide =
+      debitIsCash && !creditIsCash
+        ? debit
+        : !debitIsCash && creditIsCash
+        ? credit
+        : null;
+    if (cashSide) {
+      const cashFund = fundFromAccount(cashSide);
+      if (cashFund) skipCashflow = true;
+    }
+  }
+  if (!skipCashflow && valid) {
     const cfEntry = buildCashflowEntry({
       date: dateISO,
       debit,
@@ -1067,11 +1082,12 @@ function attachTransactionsHandlers() {
       if (believerId) addCL(date, believerId, gen.code, v, amt, note);
     } else if (v === "DIR_EARMARK") {
       const { income, bank } = fundAccounts(fund);
+      if (!income || !bank) return alert("Selected fund is missing income/bank accounts.");
       postJ({
         date,
         fund,
         desc: desc[v],
-        debit: bank.code,
+        debit: GL.CASH_BANK_OP,
         credit: income.code,
         amount: amt,
       });
@@ -1079,6 +1095,21 @@ function attachTransactionsHandlers() {
         date,
         type: "receipt",
         bucket: `Direct Contribution — ${fund}`,
+        amount: amt,
+        fund,
+      });
+      postJ({
+        date,
+        fund,
+        desc: `Transfer to ${bank.name}`,
+        debit: bank.code,
+        credit: GL.CASH_BANK_OP,
+        amount: amt,
+      });
+      postCashflow({
+        date,
+        type: "outgoing",
+        bucket: `Transfer to ${fund}`,
         amount: amt,
         fund,
       });
@@ -1877,6 +1908,8 @@ function attachReportsHandlers() {
     window.location.href = "index.html";
   });
 
+  ensureSeedDataStrict();
+
   const form = document.getElementById("reportForm");
   const rFrom = document.getElementById("rFrom");
   const rTo = document.getElementById("rTo");
@@ -1889,11 +1922,13 @@ function attachReportsHandlers() {
   const tabIS = document.getElementById("tabIS");
   // Balance Sheet tab/section are part of the default reports markup.
   const tabBS = document.getElementById("tabBS");
+  const tabFund = document.getElementById("tabFund");
 
   const tbSection = document.getElementById("tbSection");
   const cfSection = document.getElementById("cfSection");
   const isSection = document.getElementById("isSection");
   const bsSection = document.getElementById("bsSection");
+  const fundSection = document.getElementById("fundSection");
 
   const tbContainer = document.getElementById("tbContainer");
   const tbMeta = document.getElementById("tbMeta");
@@ -1904,6 +1939,10 @@ function attachReportsHandlers() {
   const isViewSel = document.getElementById("isView"); // Income Statement view selector
   const bsContainer = document.getElementById("bsContainer");
   const bsMeta = document.getElementById("bsMeta");
+  const fundLedgerFundSel = document.getElementById("fundLedgerFund");
+  const fundLedgerAccountSel = document.getElementById("fundLedgerAccount");
+  const fundLedgerMeta = document.getElementById("fundLedgerMeta");
+  const fundLedgerBody = document.querySelector("#fundLedgerTable tbody");
 
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -1914,33 +1953,187 @@ function attachReportsHandlers() {
   rFrom.value = iso(firstOfMonth);
   rTo.value = iso(today);
 
-  const showTab = (showTB, showCF, showIS, showBS) => {
+  const showTab = (showTB, showCF, showIS, showBS, showFund) => {
     tbSection.style.display = showTB ? "" : "none";
     cfSection.style.display = showCF ? "" : "none";
     isSection.style.display = showIS ? "" : "none";
     if (bsSection) bsSection.style.display = showBS ? "" : "none";
+    if (fundSection) fundSection.style.display = showFund ? "" : "none";
   };
   tabTB.addEventListener("click", () => {
-    showTab(true, false, false, false);
+    showTab(true, false, false, false, false);
     runTB();
   });
   tabCF.addEventListener("click", () => {
-    showTab(false, true, false, false);
+    showTab(false, true, false, false, false);
     runCF();
   });
   tabIS.addEventListener("click", () => {
-    showTab(false, false, true, false);
+    showTab(false, false, true, false, false);
     runIS();
   });
   tabBS?.addEventListener("click", () => {
-    showTab(false, false, false, true);
+    showTab(false, false, false, true, false);
     runBS();
   });
-  showTab(true, false, false, false);
+  tabFund?.addEventListener("click", () => {
+    showTab(false, false, false, false, true);
+    runFundLedger();
+  });
+  showTab(true, false, false, false, false);
 
   const coa = () => loadJSON(COA_KEY).sort((a, b) => a.code.localeCompare(b.code));
   const journal = () => loadJSON(JOURNAL_KEY);
   const cfRows = () => loadCashflow();
+
+  const sortedFunds = () =>
+    loadJSON(FUNDS_KEY, [])
+      .slice()
+      .sort((a, b) => a.code.localeCompare(b.code));
+
+  function populateFundLedgerOptions() {
+    if (!fundLedgerFundSel) return;
+    const funds = sortedFunds();
+    fundLedgerFundSel.innerHTML = funds
+      .map((f) => `<option value="${f.code}">${f.code} — ${f.name}</option>`)
+      .join("");
+    updateFundLedgerAccountOptions();
+  }
+
+  function updateFundLedgerAccountOptions() {
+    if (!fundLedgerAccountSel) return;
+    const fundCode = fundLedgerFundSel?.value;
+    const accounts = coa()
+      .filter((acct) => acct.fund === fundCode)
+      .sort((a, b) => a.code.localeCompare(b.code));
+    if (accounts.length === 0) {
+      fundLedgerAccountSel.innerHTML =
+        '<option value="" disabled selected>— No accounts available —</option>';
+    } else {
+      fundLedgerAccountSel.innerHTML = accounts
+        .map((acct) => `<option value="${acct.code}">${acct.code} — ${acct.name}</option>`)
+        .join("");
+    }
+  }
+
+  function renderFundLedger() {
+    if (!fundLedgerBody || !fundLedgerFundSel || !fundLedgerAccountSel) return;
+    const fundCode = fundLedgerFundSel.value;
+    const acctCode = fundLedgerAccountSel.value;
+    const fromISO = rFrom.value;
+    const toISO = rTo.value;
+
+    fundLedgerBody.innerHTML = "";
+
+    if (!fundCode || !acctCode || !fromISO || !toISO) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td colspan="5" style="text-align:center;color:#6b7280;">Select a fund and account to view activity.</td>';
+      fundLedgerBody.appendChild(tr);
+      if (fundLedgerMeta)
+        fundLedgerMeta.textContent = "";
+      return;
+    }
+
+    const acct = acctByCode(acctCode);
+    if (!acct) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td colspan="5" style="text-align:center;color:#b91c1c;">Account not found in chart of accounts.</td>';
+      fundLedgerBody.appendChild(tr);
+      if (fundLedgerMeta)
+        fundLedgerMeta.textContent = "";
+      return;
+    }
+
+    const isNaturalDebit =
+      acct.type === ACCT_TYPES.ASSET || acct.type === ACCT_TYPES.EXPENSE;
+    const entries = journal()
+      .filter((row) => row && row.date && (row.debit === acctCode || row.credit === acctCode))
+      .sort((a, b) => {
+        const dateCompare = String(a.date).localeCompare(String(b.date));
+        if (dateCompare !== 0) return dateCompare;
+        const descCompare = String(a.desc || "").localeCompare(String(b.desc || ""));
+        if (descCompare !== 0) return descCompare;
+        return (Number(a.amount) || 0) - (Number(b.amount) || 0);
+      });
+
+    const deltaFor = (row) => {
+      const amt = Number(row.amount) || 0;
+      if (row.debit === acctCode) return isNaturalDebit ? amt : -amt;
+      if (row.credit === acctCode) return isNaturalDebit ? -amt : amt;
+      return 0;
+    };
+
+    const opening = entries
+      .filter((row) => String(row.date) < fromISO)
+      .reduce((sum, row) => sum + deltaFor(row), 0);
+
+    const inRange = entries.filter(
+      (row) => String(row.date) >= fromISO && String(row.date) <= toISO
+    );
+
+    const fmt = (val) => Number(val || 0).toFixed(2);
+
+    const openingRow = document.createElement("tr");
+    openingRow.innerHTML = `
+      <td colspan="4" style="text-align:right;font-weight:600;">Opening Balance</td>
+      <td style="text-align:right;">${fmt(opening)}</td>
+    `;
+    fundLedgerBody.appendChild(openingRow);
+
+    let running = opening;
+
+    if (inRange.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td colspan="5" style="text-align:center;color:#6b7280;">No activity for the selected period.</td>';
+      fundLedgerBody.appendChild(tr);
+    } else {
+      inRange.forEach((row) => {
+        const amt = Number(row.amount) || 0;
+        const debitAmt = row.debit === acctCode ? amt : 0;
+        const creditAmt = row.credit === acctCode ? amt : 0;
+        running += deltaFor(row);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.date}</td>
+          <td>${row.desc || ""}</td>
+          <td style="text-align:right;">${debitAmt ? fmt(debitAmt) : ""}</td>
+          <td style="text-align:right;">${creditAmt ? fmt(creditAmt) : ""}</td>
+          <td style="text-align:right;">${fmt(running)}</td>
+        `;
+        fundLedgerBody.appendChild(tr);
+      });
+    }
+
+    const closingRow = document.createElement("tr");
+    closingRow.innerHTML = `
+      <td colspan="4" style="text-align:right;font-weight:600;">Closing Balance</td>
+      <td style="text-align:right;">${fmt(running)}</td>
+    `;
+    fundLedgerBody.appendChild(closingRow);
+
+    if (fundLedgerMeta) {
+      const natural = isNaturalDebit ? "Debit" : "Credit";
+      fundLedgerMeta.textContent = `Ledger for ${acct.code} ${acct.name} — Natural balance: ${natural}`;
+    }
+  }
+
+  function runFundLedger() {
+    if (!fundSection || fundSection.style.display === "none") return;
+    renderFundLedger();
+  }
+
+  if (fundLedgerFundSel) {
+    populateFundLedgerOptions();
+    renderFundLedger();
+    fundLedgerFundSel.addEventListener("change", () => {
+      updateFundLedgerAccountOptions();
+      renderFundLedger();
+    });
+  }
+  fundLedgerAccountSel?.addEventListener("change", () => runFundLedger());
 
   // Badi helpers
   const BADI_MONTHS = [
@@ -2590,6 +2783,7 @@ function attachReportsHandlers() {
     else if (cfSection.style.display !== "none") runCF();
     else if (isSection.style.display !== "none") runIS();
     else if (bsSection && bsSection.style.display !== "none") runBS();
+    else if (fundSection && fundSection.style.display !== "none") runFundLedger();
     else runTB();
   });
 
