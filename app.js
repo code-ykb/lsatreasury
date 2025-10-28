@@ -2076,8 +2076,35 @@ function attachReportsHandlers() {
     new Date(d.getFullYear(), d.getMonth(), d.getDate())
       .toISOString()
       .slice(0, 10);
-  rFrom.value = iso(firstOfMonth);
-  rTo.value = iso(today);
+
+  const dateCandidates = [];
+  const pushDate = (value) => {
+    if (!value) return;
+    const str = String(value).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) dateCandidates.push(str);
+  };
+  loadJSON(JOURNAL_KEY, []).forEach((row) => pushDate(row?.date));
+  loadCashflow().forEach((row) => pushDate(row?.date));
+  const sortedDates = dateCandidates.sort();
+  if (sortedDates.length) {
+    rFrom.value = sortedDates[0];
+    rTo.value = sortedDates[sortedDates.length - 1];
+  } else {
+    rFrom.value = iso(firstOfMonth);
+    rTo.value = iso(today);
+  }
+
+  const ensureRangeOrder = () => {
+    const fromVal = rFrom.value;
+    const toVal = rTo.value;
+    if (fromVal && toVal && fromVal > toVal) {
+      rFrom.value = toVal;
+      rTo.value = fromVal;
+    }
+    return { fromISO: rFrom.value, toISO: rTo.value };
+  };
+
+  ensureRangeOrder();
 
   const showTab = (showTB, showCF, showIS, showBS, showFund) => {
     tbSection.style.display = showTB ? "" : "none";
@@ -2146,8 +2173,7 @@ function attachReportsHandlers() {
     if (!fundLedgerBody || !fundLedgerFundSel || !fundLedgerAccountSel) return;
     const fundCode = fundLedgerFundSel.value;
     const acctCode = fundLedgerAccountSel.value;
-    const fromISO = rFrom.value;
-    const toISO = rTo.value;
+    const { fromISO, toISO } = ensureRangeOrder();
 
     fundLedgerBody.innerHTML = "";
 
@@ -2330,17 +2356,25 @@ function attachReportsHandlers() {
 
   function slicePeriods(fromISO, toISO, calendar, monthly) {
     const out = [];
-    const fromDate = parseISO(fromISO);
-    const end = parseISO(toISO);
-    if (fromDate > end) return out;
+    if (!fromISO || !toISO) return out;
+    let fromDate = parseISO(fromISO);
+    let end = parseISO(toISO);
+    if (Number.isNaN(fromDate?.getTime()) || Number.isNaN(end?.getTime())) return out;
+    if (fromDate > end) {
+      const tmp = fromDate;
+      fromDate = end;
+      end = tmp;
+    }
     let d = new Date(fromDate);
 
     if (!monthly) {
+      const startISO = iso(fromDate);
+      const endISO = iso(end);
       out.push({
-        key: `ALL:${fromISO}:${toISO}:${calendar}`,
-        label: `${fromISO} → ${toISO}`,
-        start: fromISO,
-        end: toISO,
+        key: `ALL:${startISO}:${endISO}:${calendar}`,
+        label: `${startISO} → ${endISO}`,
+        start: startISO,
+        end: endISO,
       });
       return out;
     }
@@ -2472,7 +2506,8 @@ function attachReportsHandlers() {
   }
   function runTB() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderTB(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderTB(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
 
   // ===== CF =====
@@ -2607,7 +2642,8 @@ function attachReportsHandlers() {
   }
   function runCF() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderCF(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderCF(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
 
   // ===== IS (Per-Fund / Consolidated) =====
@@ -2744,7 +2780,8 @@ function attachReportsHandlers() {
   }
   function runIS() {
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderIS(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderIS(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
   isViewSel?.addEventListener("change", runIS);
 
@@ -2899,12 +2936,14 @@ function attachReportsHandlers() {
   function runBS() {
     if (!bsContainer) return;
     const cal = document.querySelector('input[name="cal"]:checked')?.value || "greg";
-    renderBS(slicePeriods(rFrom.value, rTo.value, cal, rMonthly.checked));
+    const { fromISO, toISO } = ensureRangeOrder();
+    renderBS(slicePeriods(fromISO, toISO, cal, rMonthly.checked));
   }
 
   // Form submit runs current tab
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    ensureRangeOrder();
     if (tbSection.style.display !== "none") runTB();
     else if (cfSection.style.display !== "none") runCF();
     else if (isSection.style.display !== "none") runIS();
