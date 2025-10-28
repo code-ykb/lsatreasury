@@ -12,6 +12,7 @@ const CONTRIB_LEDGER_KEY  = "lsa_contrib_ledger";
 const COA_KEY             = "lsa_coa";
 const FUNDS_KEY           = "lsa_funds";
 const BELIEVERS_KEY       = "lsa_believers";
+const TRANSACTIONS_KEY    = "lsa_transactions";
 
 // Admin sender (for future use)
 const ADMIN_FROM_EMAIL = "treasurylocalspiritualassembly@gmail.com";
@@ -26,7 +27,10 @@ const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
 const loadCashflow = () => loadJSON(CASHFLOW_KEY);
 const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
-const postCashflow = ({
+const loadTransactions = () => loadJSON(TRANSACTIONS_KEY);
+const saveTransactions = (rows) => saveJSON(TRANSACTIONS_KEY, rows);
+const postCashflow = (
+  {
   date,
   type,
   bucket,
@@ -35,7 +39,10 @@ const postCashflow = ({
   note = "",
   _tag = null,
   _src = null,
-}) => {
+  },
+  tag = null,
+  source = null
+) => {
   const cf = loadCashflow();
   const entry = {
     date,
@@ -45,14 +52,21 @@ const postCashflow = ({
     fund: fund ?? null,
     note: note || "",
   };
-  if (_tag) entry._tag = _tag;
-  if (_src) entry._src = _src;
+  const appliedTag = tag || _tag || null;
+  const appliedSource = source || _src || null;
+  if (appliedTag) entry._tag = appliedTag;
+  if (appliedSource) entry._src = appliedSource;
   cf.push(entry);
   saveCashflow(cf);
 };
 const postCashflowWithTag = (entry, tag, source) => {
   if (!entry) return;
-  postCashflow({ ...entry, _tag: tag || null, _src: source || null });
+  postCashflow(entry, tag, source);
+};
+const removeJournalByTag = (tag) => {
+  if (!tag) return;
+  const filtered = loadJSON(JOURNAL_KEY).filter((row) => row?._tag !== tag);
+  saveJSON(JOURNAL_KEY, filtered);
 };
 const removeCashflowByTag = (tag) => {
   if (!tag) return;
@@ -1155,6 +1169,32 @@ function attachTransactionsHandlers() {
     SPECIAL_HELD: "2300",
     EXT_PAYABLE: "2400",
   };
+  const CONTRIBUTION_LABELS = {
+    MEET_GEN: "Contribution Meeting — General Fund",
+    MEET_EARMARK: "Contribution Meeting — Earmarked Fund",
+    MEET_SPECIAL: "Contribution Meeting — Special",
+    DIR_GEN: "Direct Contribution — General Fund",
+    DIR_EARMARK: "Direct Contribution — Earmarked Fund",
+    DIR_SPECIAL: "Direct Contribution — Special",
+    EXT_MEET: "External Collection (Meeting)",
+    EXT_DIRECT: "External Collection (Direct)",
+  };
+  const PAYMENT_LABELS = {
+    PAY_GEN_BANK: "General Fund Payment (Bank)",
+    PAY_GEN_CASH: "General Fund Payment (Cash)",
+    PAY_EARMARK: "Earmarked Fund Payment",
+  };
+  const escapeHtml = (value) =>
+    String(value ?? "").replace(/[&<>"']/g, (ch) => {
+      const map = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
+      return map[ch] || ch;
+    });
   const fundAccounts = (code) => {
     const coa = loadJSON(COA_KEY);
     return {
@@ -1171,14 +1211,29 @@ function attachTransactionsHandlers() {
   const saveJournal = (v) => saveJSON(JOURNAL_KEY, v);
   const clLoad = () => loadJSON(CONTRIB_LEDGER_KEY);
   const clSave = (v) => saveJSON(CONTRIB_LEDGER_KEY, v);
-  const postJ = (e) => {
+  const readTransactions = () => {
+    const rows = loadTransactions();
+    return Array.isArray(rows) ? rows : [];
+  };
+  const logTransaction = (record) => {
+    if (!record) return;
+    const rows = readTransactions();
+    rows.push(record);
+    saveTransactions(rows);
+  };
+  const postJ = (entry, tag = null, source = null) => {
     const j = loadJournal();
-    j.push(e);
+    const row = { ...entry };
+    if (tag) row._tag = tag;
+    if (source) row._src = source;
+    j.push(row);
     saveJournal(j);
   };
-  const addCL = (date, believerId, fund, ctype, amount, note) => {
+  const addCL = (date, believerId, fund, ctype, amount, note, tag = null) => {
     const cl = clLoad();
-    cl.push({ date, believerId, fund, type: ctype, amount, note });
+    const row = { date, believerId, fund, type: ctype, amount, note };
+    if (tag) row._tag = tag;
+    cl.push(row);
     clSave(cl);
   };
 
@@ -1250,205 +1305,314 @@ function attachTransactionsHandlers() {
     const fund = cFund.value;
     const believerId = cBeliever.value || null;
     const note = (cNarr.value || "").trim();
+    const believer = believerId
+      ? believers.find((b) => b.id === believerId) || null
+      : null;
+    const tag = `TXN-${uuid()}`;
+    const createdAt = new Date().toISOString();
 
-    const desc = {
-      MEET_GEN: "Contribution Meeting — General Fund",
-      MEET_EARMARK: "Contribution Meeting — Earmarked Fund",
-      MEET_SPECIAL: "Contribution Meeting — Special",
-      DIR_GEN: "Direct Contribution — General Fund",
-      DIR_EARMARK: "Direct Contribution — Earmarked Fund",
-      DIR_SPECIAL: "Direct Contribution — Special",
-      EXT_MEET: "External Collection (Meeting)",
-      EXT_DIRECT: "External Collection (Direct)",
+    const desc = CONTRIBUTION_LABELS;
+    let txnRecord = null;
+    const baseRecord = {
+      id: tag,
+      category: "contribution",
+      subtype: v,
+      date,
+      amount: amt,
+      direction: "in",
+      note,
+      believerId,
+      believerName: believer?.name || null,
+      createdAt,
     };
+    const source = "CONTRIB";
 
     if (v === "MEET_GEN") {
       const gen = funds.find((f) => f.code === "GEN") || funds[0];
+      if (!gen) return alert("No funds configured.");
       const { income } = fundAccounts(gen.code);
-      postJ({
-        date,
-        fund: gen.code,
-        desc: desc[v],
-        debit: GL.CASH_TELLER,
-        credit: income.code,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: "Contribution Meeting — General Fund",
-        amount: amt,
-        fund: gen.code,
-      });
-      if (believerId) addCL(date, believerId, gen.code, v, amt, note);
+      if (!income) return alert("General Fund income account not found.");
+      postJ(
+        {
+          date,
+          fund: gen.code,
+          desc: desc[v],
+          debit: GL.CASH_TELLER,
+          credit: income.code,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: "Contribution Meeting — General Fund",
+          amount: amt,
+          fund: gen.code,
+        },
+        tag,
+        source
+      );
+      if (believerId) addCL(date, believerId, gen.code, v, amt, note, tag);
+      txnRecord = { ...baseRecord, fund: gen.code, description: desc[v] };
     } else if (v === "MEET_EARMARK") {
+      if (!fund) return alert("Select a fund.");
       const { income, bank } = fundAccounts(fund);
-      postJ({
-        date,
-        fund,
-        desc: desc[v],
-        debit: GL.CASH_TELLER,
-        credit: income.code,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: `Contribution Meeting — ${fund}`,
-        amount: amt,
-        fund,
-      });
-      postJ({
-        date,
-        fund,
-        desc: `Transfer to ${bank.name}`,
-        debit: bank.code,
-        credit: GL.CASH_TELLER,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: `Transfer to ${fund}`,
-        amount: amt,
-        fund,
-      });
-      if (believerId) addCL(date, believerId, fund, v, amt, note);
+      if (!income || !bank)
+        return alert("Selected fund is missing income/bank accounts.");
+      postJ(
+        {
+          date,
+          fund,
+          desc: desc[v],
+          debit: GL.CASH_TELLER,
+          credit: income.code,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: `Contribution Meeting — ${fund}`,
+          amount: amt,
+          fund,
+        },
+        tag,
+        source
+      );
+      postJ(
+        {
+          date,
+          fund,
+          desc: `Transfer to ${bank.name}`,
+          debit: bank.code,
+          credit: GL.CASH_TELLER,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "outgoing",
+          bucket: `Transfer to ${fund}`,
+          amount: amt,
+          fund,
+        },
+        tag,
+        source
+      );
+      if (believerId) addCL(date, believerId, fund, v, amt, note, tag);
+      txnRecord = { ...baseRecord, fund, description: desc[v] };
     } else if (v === "MEET_SPECIAL") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
-      postJ({
-        date,
-        fund: "SPECIAL",
-        desc: d,
-        debit: GL.CASH_TELLER,
-        credit: GL.SPECIAL_HELD,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: d,
-        amount: amt,
-        fund: null,
-        note,
-      });
-      if (believerId) addCL(date, believerId, null, v, amt, note);
+      postJ(
+        {
+          date,
+          fund: "SPECIAL",
+          desc: d,
+          debit: GL.CASH_TELLER,
+          credit: GL.SPECIAL_HELD,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: d,
+          amount: amt,
+          fund: null,
+          note,
+        },
+        tag,
+        source
+      );
+      if (believerId) addCL(date, believerId, null, v, amt, note, tag);
+      txnRecord = { ...baseRecord, fund: null, description: d };
     } else if (v === "DIR_GEN") {
       const gen = generalFund || funds[0];
       if (!gen) return alert("No funds configured.");
       const { income, bank } = fundAccounts(gen.code);
       if (!income) return alert("General Fund income account not found.");
       const debitCode = (bank && bank.code) || operatingBankCode;
-      postJ({
-        date,
-        fund: gen.code,
-        desc: desc[v],
-        debit: debitCode,
-        credit: income.code,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: "Direct Contribution — General Fund",
-        amount: amt,
-        fund: gen.code,
-      });
-      if (believerId) addCL(date, believerId, gen.code, v, amt, note);
+      postJ(
+        {
+          date,
+          fund: gen.code,
+          desc: desc[v],
+          debit: debitCode,
+          credit: income.code,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: "Direct Contribution — General Fund",
+          amount: amt,
+          fund: gen.code,
+        },
+        tag,
+        source
+      );
+      if (believerId) addCL(date, believerId, gen.code, v, amt, note, tag);
+      txnRecord = { ...baseRecord, fund: gen.code, description: desc[v] };
     } else if (v === "DIR_EARMARK") {
+      if (!fund) return alert("Select a fund.");
       const { income, bank } = fundAccounts(fund);
-      if (!income || !bank) return alert("Selected fund is missing income/bank accounts.");
-      postJ({
-        date,
-        fund,
-        desc: desc[v],
-        debit: operatingBankCode,
-        credit: income.code,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: `Direct Contribution — ${fund}`,
-        amount: amt,
-        fund,
-      });
-      postJ({
-        date,
-        fund,
-        desc: `Transfer to ${bank.name}`,
-        debit: bank.code,
-        credit: operatingBankCode,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: `Transfer to ${fund}`,
-        amount: amt,
-        fund,
-      });
-      if (believerId) addCL(date, believerId, fund, v, amt, note);
+      if (!income || !bank)
+        return alert("Selected fund is missing income/bank accounts.");
+      postJ(
+        {
+          date,
+          fund,
+          desc: desc[v],
+          debit: operatingBankCode,
+          credit: income.code,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: `Direct Contribution — ${fund}`,
+          amount: amt,
+          fund,
+        },
+        tag,
+        source
+      );
+      postJ(
+        {
+          date,
+          fund,
+          desc: `Transfer to ${bank.name}`,
+          debit: bank.code,
+          credit: operatingBankCode,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "outgoing",
+          bucket: `Transfer to ${fund}`,
+          amount: amt,
+          fund,
+        },
+        tag,
+        source
+      );
+      if (believerId) addCL(date, believerId, fund, v, amt, note, tag);
+      txnRecord = { ...baseRecord, fund, description: desc[v] };
     } else if (v === "DIR_SPECIAL") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
-      postJ({
-        date,
-        fund: "SPECIAL",
-        desc: d,
-        debit: operatingBankCode,
-        credit: GL.SPECIAL_HELD,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: d,
-        amount: amt,
-        fund: null,
-        note,
-      });
-      if (believerId) addCL(date, believerId, null, v, amt, note);
+      postJ(
+        {
+          date,
+          fund: "SPECIAL",
+          desc: d,
+          debit: operatingBankCode,
+          credit: GL.SPECIAL_HELD,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: d,
+          amount: amt,
+          fund: null,
+          note,
+        },
+        tag,
+        source
+      );
+      if (believerId) addCL(date, believerId, null, v, amt, note, tag);
+      txnRecord = { ...baseRecord, fund: null, description: d };
     } else if (v === "EXT_MEET") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
-      postJ({
-        date,
-        fund: "EXTERNAL",
-        desc: d,
-        debit: GL.CASH_TELLER,
-        credit: GL.EXT_PAYABLE,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: d,
-        amount: amt,
-        fund: null,
-        note,
-      });
+      postJ(
+        {
+          date,
+          fund: "EXTERNAL",
+          desc: d,
+          debit: GL.CASH_TELLER,
+          credit: GL.EXT_PAYABLE,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: d,
+          amount: amt,
+          fund: null,
+          note,
+        },
+        tag,
+        source
+      );
+      txnRecord = { ...baseRecord, fund: null, description: d };
     } else if (v === "EXT_DIRECT") {
       const d = note ? `${desc[v]} — ${note}` : desc[v];
-      postJ({
-        date,
-        fund: "EXTERNAL",
-        desc: d,
-        debit: operatingBankCode,
-        credit: GL.EXT_PAYABLE,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: d,
-        amount: amt,
-        fund: null,
-        note,
-      });
+      postJ(
+        {
+          date,
+          fund: "EXTERNAL",
+          desc: d,
+          debit: operatingBankCode,
+          credit: GL.EXT_PAYABLE,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "receipt",
+          bucket: d,
+          amount: amt,
+          fund: null,
+          note,
+        },
+        tag,
+        source
+      );
+      txnRecord = { ...baseRecord, fund: null, description: d };
     }
 
+    if (!txnRecord) return;
+
+    logTransaction(txnRecord);
     alert("Contribution posted.");
     cClear.click();
     renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
   });
 
   // ----- Payments -----
@@ -1490,6 +1654,22 @@ function attachTransactionsHandlers() {
     if (!narr) return alert("Enter narration.");
     const gen = generalFund || funds[0];
     const fa = (code) => fundAccounts(code);
+    const tag = `TXN-${uuid()}`;
+    const createdAt = new Date().toISOString();
+    const source = "PAYMENT";
+    let txnRecord = null;
+    const baseRecord = {
+      id: tag,
+      category: "payment",
+      subtype: v,
+      date,
+      amount: amt,
+      direction: "out",
+      note: narr,
+      createdAt,
+      fund: null,
+    };
+
     if (v === "PAY_GEN_BANK") {
       if (!gen) return alert("No funds configured.");
       const accounts = fa(gen.code);
@@ -1497,37 +1677,60 @@ function attachTransactionsHandlers() {
       if (!expenseAcct) return alert("General Fund expense account not found.");
       const creditAccount =
         accounts?.bank?.code || generalFundBankCode || operatingBankCode;
-      postJ({
-        date,
-        fund: gen.code,
-        desc: `Expense — General Fund — ${narr}`,
-        debit: expenseAcct,
-        credit: creditAccount,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: `Expense — General Fund — ${narr}`,
-        amount: amt,
-        fund: gen.code,
-      });
+      const label = `Expense — General Fund — ${narr}`;
+      postJ(
+        {
+          date,
+          fund: gen.code,
+          desc: label,
+          debit: expenseAcct,
+          credit: creditAccount,
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "outgoing",
+          bucket: label,
+          amount: amt,
+          fund: gen.code,
+        },
+        tag,
+        source
+      );
+      txnRecord = { ...baseRecord, fund: gen.code, description: label };
     } else if (v === "PAY_GEN_CASH") {
-      postJ({
-        date,
-        fund: gen.code,
-        desc: `Cash Expense — General Fund — ${narr}`,
-        debit: fa(gen.code).expense.code,
-        credit: "1010",
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: `Cash Expense — General Fund — ${narr}`,
-        amount: amt,
-        fund: gen.code,
-      });
+      if (!gen) return alert("No funds configured.");
+      const expenseAcct = fa(gen.code).expense?.code;
+      if (!expenseAcct) return alert("General Fund expense account not found.");
+      const label = `Cash Expense — General Fund — ${narr}`;
+      postJ(
+        {
+          date,
+          fund: gen.code,
+          desc: label,
+          debit: expenseAcct,
+          credit: "1010",
+          amount: amt,
+        },
+        tag,
+        source
+      );
+      postCashflow(
+        {
+          date,
+          type: "outgoing",
+          bucket: label,
+          amount: amt,
+          fund: gen.code,
+        },
+        tag,
+        source
+      );
+      txnRecord = { ...baseRecord, fund: gen.code, description: label };
     } else if (v === "PAY_EARMARK") {
       const code = pFund.value;
       if (!code) return alert("Select a fund.");
@@ -1539,99 +1742,256 @@ function attachTransactionsHandlers() {
         const creditAccount =
           accounts?.bank?.code || generalFundBankCode || operatingBankCode;
         const label = `Expense — General Fund — ${narr}`;
-        postJ({
-          date,
-          fund: code,
-          desc: label,
-          debit: expenseAcct,
-          credit: creditAccount,
-          amount: amt,
-        });
-        postCashflow({
-          date,
-          type: "outgoing",
-          bucket: label,
-          amount: amt,
-          fund: code,
-        });
-        return;
+        postJ(
+          {
+            date,
+            fund: code,
+            desc: label,
+            debit: expenseAcct,
+            credit: creditAccount,
+            amount: amt,
+          },
+          tag,
+          source
+        );
+        postCashflow(
+          {
+            date,
+            type: "outgoing",
+            bucket: label,
+            amount: amt,
+            fund: code,
+          },
+          tag,
+          source
+        );
+        txnRecord = { ...baseRecord, fund: code, description: label };
+      } else {
+        const f = fa(code);
+        const expenseAcct = f?.expense?.code;
+        const fundBankAcct = f?.bank?.code;
+        if (!expenseAcct || !fundBankAcct)
+          return alert("Selected fund is missing bank or expense accounts.");
+
+        const fundInfo = funds.find((fund) => fund.code === code) || null;
+        const fundName = fundInfo?.name || code;
+        const stagingBankCode = generalFundBankCode || operatingBankCode;
+        const stagingBank = acctByCode(stagingBankCode);
+        const transferDesc = `Transfer from ${fundName} to ${
+          stagingBank?.name || stagingBankCode
+        }`;
+        const transferBucket = `Transfer from ${fundName}`;
+        const expenseLabel = `Expense — ${fundName} — ${narr}`;
+
+        postJ(
+          {
+            date,
+            fund: code,
+            desc: transferDesc,
+            debit: stagingBankCode,
+            credit: fundBankAcct,
+            amount: amt,
+          },
+          tag,
+          source
+        );
+        postCashflow(
+          {
+            date,
+            type: "receipt",
+            bucket: transferBucket,
+            amount: amt,
+            fund: code,
+            note: narr,
+          },
+          tag,
+          source
+        );
+
+        postJ(
+          {
+            date,
+            fund: code,
+            desc: expenseLabel,
+            debit: expenseAcct,
+            credit: stagingBankCode,
+            amount: amt,
+          },
+          tag,
+          source
+        );
+        postCashflow(
+          {
+            date,
+            type: "outgoing",
+            bucket: expenseLabel,
+            amount: amt,
+            fund: code,
+            note: narr,
+          },
+          tag,
+          source
+        );
+        txnRecord = { ...baseRecord, fund: code, description: expenseLabel };
       }
-
-      const f = fa(code);
-      const expenseAcct = f?.expense?.code;
-      const fundBankAcct = f?.bank?.code;
-      if (!expenseAcct || !fundBankAcct)
-        return alert("Selected fund is missing bank or expense accounts.");
-
-      const fundInfo = funds.find((fund) => fund.code === code) || null;
-      const fundName = fundInfo?.name || code;
-      const stagingBankCode = generalFundBankCode || operatingBankCode;
-      const stagingBank = acctByCode(stagingBankCode);
-      const transferDesc = `Transfer from ${fundName} to ${
-        stagingBank?.name || stagingBankCode
-      }`;
-      const transferBucket = `Transfer from ${fundName}`;
-      const expenseLabel = `Expense — ${fundName} — ${narr}`;
-
-      postJ({
-        date,
-        fund: code,
-        desc: transferDesc,
-        debit: stagingBankCode,
-        credit: fundBankAcct,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "receipt",
-        bucket: transferBucket,
-        amount: amt,
-        fund: code,
-        note: narr,
-      });
-
-      postJ({
-        date,
-        fund: code,
-        desc: expenseLabel,
-        debit: expenseAcct,
-        credit: stagingBankCode,
-        amount: amt,
-      });
-      postCashflow({
-        date,
-        type: "outgoing",
-        bucket: expenseLabel,
-        amount: amt,
-        fund: code,
-        note: narr,
-      });
     }
+
+    if (!txnRecord) return;
+
+    logTransaction(txnRecord);
     alert("Payment posted.");
     document.getElementById("pClear").click();
     renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
   });
 
   // ----- Recent (tail) -----
   function renderRecent() {
-    const j = loadJSON(JOURNAL_KEY);
-    const rows = j.slice(-20).reverse();
     const tb = document.querySelector("#recentTable tbody");
     if (!tb) return;
     tb.innerHTML = "";
-    rows.forEach((r) => {
-      const d = acctByCode(r.debit);
-      const c = acctByCode(r.credit);
+
+    const txns = readTransactions();
+    const fundLabel = (code) => {
+      if (!code) return "—";
+      const f = funds.find((fund) => fund.code === code);
+      return f ? `${escapeHtml(f.code)} — ${escapeHtml(f.name)}` : escapeHtml(code);
+    };
+    const subtypeLabel = (txn) => {
+      if (txn.category === "contribution") {
+        return CONTRIBUTION_LABELS[txn.subtype] || txn.subtype || "Contribution";
+      }
+      if (txn.category === "payment") {
+        return PAYMENT_LABELS[txn.subtype] || txn.subtype || "Payment";
+      }
+      return txn.subtype || txn.category || "";
+    };
+
+    if (txns.length === 0) {
+      const journal = loadJournal();
+      if (!journal.length) {
+        tb.innerHTML =
+          '<tr class="empty-row"><td colspan="6">No transactions posted yet.</td></tr>';
+        return;
+      }
+      journal
+        .slice(-20)
+        .reverse()
+        .forEach((r) => {
+          const d = acctByCode(r.debit);
+          const c = acctByCode(r.credit);
+          const tag = r._tag || "";
+          const amount = Number(r.amount) || 0;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${escapeHtml(r.date || "")}</td>
+            <td>${escapeHtml(r.fund || "")}</td>
+            <td>${escapeHtml(r.desc || "")}</td>
+            <td>${escapeHtml(
+              d ? `${d.code} ${d.name}` : r.debit || ""
+            )}</td>
+            <td>${escapeHtml(
+              c ? `${c.code} ${c.name}` : r.credit || ""
+            )}</td>
+            <td style="text-align:right;">${amount.toFixed(2)}</td>
+            <td class="actions">${
+              tag
+                ? `<button class="rowbtn danger" data-action="delete" data-tag="${escapeHtml(
+                    tag
+                  )}" data-date="${escapeHtml(r.date || "")}" data-kind="transaction"><i class="fa-solid fa-trash-can"></i> Delete</button>`
+                : '<span style="color:var(--text-muted); font-size:12px;">Unavailable</span>'
+            }</td>`;
+          tb.appendChild(tr);
+        });
+      return;
+    }
+
+    const sorted = txns
+      .slice()
+      .sort((a, b) => {
+        const dateA = a.date || "";
+        const dateB = b.date || "";
+        const dateCmp = dateA.localeCompare(dateB);
+        if (dateCmp !== 0) return dateCmp;
+        const createdA = a.createdAt || "";
+        const createdB = b.createdAt || "";
+        return createdA.localeCompare(createdB);
+      })
+      .slice(-20)
+      .reverse();
+
+    sorted.forEach((txn) => {
+      const direction = txn.direction === "out" ? -1 : 1;
+      const rawAmount = Number(txn.amount) || 0;
+      const signedAmount = direction * Math.abs(rawAmount);
+      const amountDisplay = `${signedAmount < 0 ? "−" : ""}${Math.abs(signedAmount).toFixed(2)}`;
+      const believerBadge = txn.believerName
+        ? `<span class="txn-meta">Believer: ${escapeHtml(txn.believerName)}</span>`
+        : "";
+      const noteLine = txn.note
+        ? `<span class="txn-meta">${escapeHtml(txn.note)}</span>`
+        : "";
+      const detail = [escapeHtml(txn.description || subtypeLabel(txn)), noteLine, believerBadge]
+        .filter(Boolean)
+        .join("<br>");
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${r.date}</td><td>${r.fund || ""}</td><td>${
-        r.desc || ""
-      }</td><td>${d ? d.code + " " + d.name : r.debit}</td><td>${
-        c ? c.code + " " + c.name : r.credit
-      }</td><td style="text-align:right;">${Number(r.amount).toFixed(2)}</td>`;
+      tr.innerHTML = `
+        <td>${escapeHtml(txn.date || "")}</td>
+        <td>
+          <div class="txn-type">${escapeHtml(subtypeLabel(txn))}</div>
+          <div class="txn-category">${escapeHtml(txn.category || "")}</div>
+        </td>
+        <td>${fundLabel(txn.fund)}</td>
+        <td>${detail}</td>
+        <td class="amount-cell" data-dir="${txn.direction || "in"}">${amountDisplay}</td>
+        <td class="actions">
+          <button class="rowbtn danger" data-action="delete" data-id="${escapeHtml(
+            txn.id
+          )}" data-tag="${escapeHtml(txn.id)}" data-date="${escapeHtml(
+            txn.date || ""
+          )}" data-kind="${escapeHtml(txn.category || "transaction")}"><i class="fa-solid fa-trash-can"></i> Delete</button>
+        </td>`;
       tb.appendChild(tr);
     });
   }
   renderRecent();
+
+  document.getElementById("recentTable")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action='delete']");
+    if (!btn) return;
+    const tag = btn.dataset.tag || btn.dataset.id;
+    if (!tag) return;
+    const txns = readTransactions();
+    const txn = txns.find((t) => t.id === tag) || null;
+    const fallbackKind = btn.dataset.kind || "transaction";
+    const fallbackDate = btn.dataset.date || "(no date)";
+    const friendlyType =
+      txn?.category === "payment"
+        ? "payment"
+        : txn?.category === "contribution"
+        ? "contribution"
+        : fallbackKind || "transaction";
+    const prompt = `Delete ${friendlyType} dated ${
+      txn?.date || fallbackDate || "(no date)"
+    }? This action will remove it from all reports.`;
+    if (!confirm(prompt)) return;
+
+    if (txn) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      saveTransactions(remaining);
+    } else if (txns.length) {
+      const remaining = txns.filter((t) => t.id !== tag);
+      if (remaining.length !== txns.length) saveTransactions(remaining);
+    }
+    removeJournalByTag(tag);
+    removeCashflowByTag(tag);
+    const ledgerRows = clLoad();
+    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
+    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
+    alert("Transaction deleted.");
+    renderRecent();
+    if (typeof renderStatement === "function") renderStatement();
+  });
 
   // ----- Statements (strict believer filter + print) -----
   const stmtForm = document.getElementById("stmtForm"),
