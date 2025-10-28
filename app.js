@@ -60,6 +60,218 @@ const removeCashflowByTag = (tag) => {
   saveCashflow(filtered);
 };
 
+const sanitizeCashflowRow = (row) => {
+  if (!row) return null;
+  const date = (row.date === null || row.date === undefined ? "" : String(row.date)).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const type = row.type === "receipt" ? "receipt" : "outgoing";
+  const rawAmount = Number(row.amount);
+  if (!Number.isFinite(rawAmount) || rawAmount === 0) return null;
+  const amount = Math.round(rawAmount * 100) / 100;
+  const bucket = (row.bucket === null || row.bucket === undefined ? "" : String(row.bucket)).trim() || "Cash movement";
+  const note = (row.note === null || row.note === undefined ? "" : String(row.note)).trim();
+  const fundRaw = row.fund === null || row.fund === undefined ? "" : String(row.fund).trim();
+  const clean = {
+    date,
+    type,
+    bucket,
+    amount,
+    fund: fundRaw || null,
+  };
+  if (note) clean.note = note;
+  if (row._tag) clean._tag = row._tag;
+  if (row._src) clean._src = row._src;
+  return clean;
+};
+
+const cashflowSignature = (row) => {
+  const fund = row.fund === null || row.fund === undefined ? "" : String(row.fund).trim();
+  return [row.date, row.type, row.bucket, row.amount.toFixed(2), fund].join("||");
+};
+
+const cashflowRowsEqual = (a, b) => {
+  if (!a || !b) return false;
+  const fields = ["date", "type", "bucket", "amount", "note"];
+  for (const field of fields) {
+    const av = field === "amount" ? Number(a[field] || 0) : a[field] || "";
+    const bv = field === "amount" ? Number(b[field] || 0) : b[field] || "";
+    if (field === "amount") {
+      if (Math.abs(av - bv) > 0.0001) return false;
+    } else if (String(av) !== String(bv)) {
+      return false;
+    }
+  }
+  const aFund = a.fund || "";
+  const bFund = b.fund || "";
+  if (String(aFund) !== String(bFund)) return false;
+  const tagA = a._tag || "";
+  const tagB = b._tag || "";
+  if (tagA !== tagB) return false;
+  const srcA = a._src || "";
+  const srcB = b._src || "";
+  return srcA === srcB;
+};
+
+const ensureCashflowIntegrity = () => {
+  ensureSeedDataStrict();
+
+  const existingRaw = loadCashflow();
+  const existing = [];
+  const existingCounts = new Map();
+  if (Array.isArray(existingRaw)) {
+    existingRaw.forEach((row) => {
+      const clean = sanitizeCashflowRow(row);
+      if (!clean) return;
+      existing.push(clean);
+      const key = cashflowSignature(clean);
+      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
+    });
+  }
+
+  const expectedRows = [];
+  const expectedCounts = new Map();
+  const journalRows = loadJSON(JOURNAL_KEY, []);
+  const fundsByCode = new Map(
+    loadJSON(FUNDS_KEY, []).map((f) => [String(f.code || "").trim(), f])
+  );
+
+  const noteKeyFor = (row) => {
+    if (!row) return null;
+    const date = (row.date === null || row.date === undefined ? "" : String(row.date)).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const amount = Number(row.amount);
+    if (!Number.isFinite(amount) || amount === 0) return null;
+    const fund = typeof row.fund === "string" ? row.fund.trim() : "";
+    return `${date}||${fund}||${Math.round(amount * 100)}`;
+  };
+
+  const expenseNotes = new Map();
+  journalRows.forEach((row) => {
+    const key = noteKeyFor(row);
+    if (!key) return;
+    const desc = row?.desc ? String(row.desc) : "";
+    const match = desc.match(/^(?:Expense|Cash Expense)\s+—\s+(.+?)\s+—\s+(.*)$/);
+    if (!match) return;
+    const note = match[2].trim();
+    if (!note) return;
+    expenseNotes.set(key, note);
+  });
+
+  journalRows.forEach((row) => {
+    const cfEntry = buildCashflowEntry({
+      date: row?.date,
+      debit: row?.debit,
+      credit: row?.credit,
+      amount: row?.amount,
+      desc: row?.desc,
+      fund: row?.fund,
+      note: row?.note,
+    });
+    if (cfEntry) {
+      const candidate = sanitizeCashflowRow({
+        ...cfEntry,
+        note: row?.note || cfEntry.note || "",
+      });
+      if (candidate) {
+        expectedRows.push(candidate);
+        const key = cashflowSignature(candidate);
+        expectedCounts.set(key, (expectedCounts.get(key) || 0) + 1);
+      }
+    }
+
+    const debitIsCash = isCashLikeAccount(row?.debit);
+    const creditIsCash = isCashLikeAccount(row?.credit);
+    if (debitIsCash && creditIsCash) {
+      const desc = row?.desc ? String(row.desc).trim() : "";
+      if (/^Transfer from/i.test(desc)) {
+        let bucket = desc;
+        const lower = desc.toLowerCase();
+        const idx = lower.indexOf(" to ");
+        if (idx !== -1) bucket = desc.slice(0, idx).trim();
+        const fundCode = typeof row?.fund === "string" ? row.fund.trim() : "";
+        if (!bucket) {
+          const fundName = fundsByCode.get(fundCode)?.name || fundCode || "Fund";
+          bucket = `Transfer from ${fundName}`;
+        }
+        const noteLookupKey = noteKeyFor(row);
+        const receiptNote = noteLookupKey ? expenseNotes.get(noteLookupKey) || "" : "";
+        const receiptCandidate = sanitizeCashflowRow({
+          date: row?.date,
+          type: "receipt",
+          bucket,
+          amount: row?.amount,
+          fund: fundCode,
+          note: receiptNote,
+        });
+        if (receiptCandidate) {
+          expectedRows.push(receiptCandidate);
+          const key = cashflowSignature(receiptCandidate);
+          expectedCounts.set(key, (expectedCounts.get(key) || 0) + 1);
+        }
+      }
+    }
+  });
+
+  const needed = new Map();
+  expectedCounts.forEach((count, key) => {
+    const have = existingCounts.get(key) || 0;
+    if (count > have) needed.set(key, count - have);
+  });
+
+  const additions = [];
+  expectedRows.forEach((row) => {
+    const key = cashflowSignature(row);
+    const need = needed.get(key) || 0;
+    if (need > 0) {
+      additions.push(row);
+      needed.set(key, need - 1);
+    }
+  });
+
+  const finalRows = existing.concat(additions);
+  finalRows.sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date);
+    if (dateCmp !== 0) return dateCmp;
+    if (a.type !== b.type) return a.type === "receipt" ? -1 : 1;
+    const bucketCmp = a.bucket.localeCompare(b.bucket);
+    if (bucketCmp !== 0) return bucketCmp;
+    const noteA = a.note || "";
+    const noteB = b.note || "";
+    if (noteA !== noteB) return noteA.localeCompare(noteB);
+    const fundA = a.fund || "";
+    const fundB = b.fund || "";
+    return fundA.localeCompare(fundB);
+  });
+
+  const cleanedOriginal = existing.slice().sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date);
+    if (dateCmp !== 0) return dateCmp;
+    if (a.type !== b.type) return a.type === "receipt" ? -1 : 1;
+    const bucketCmp = a.bucket.localeCompare(b.bucket);
+    if (bucketCmp !== 0) return bucketCmp;
+    const noteA = a.note || "";
+    const noteB = b.note || "";
+    if (noteA !== noteB) return noteA.localeCompare(noteB);
+    const fundA = a.fund || "";
+    const fundB = b.fund || "";
+    return fundA.localeCompare(fundB);
+  });
+
+  let mutated = finalRows.length !== cleanedOriginal.length;
+  if (!mutated) {
+    for (let i = 0; i < finalRows.length; i++) {
+      if (!cashflowRowsEqual(finalRows[i], cleanedOriginal[i])) {
+        mutated = true;
+        break;
+      }
+    }
+  }
+
+  if (mutated) saveCashflow(finalRows);
+
+  return finalRows;
+};
+
 // Simple (demo) hash
 function hash(s) {
   let h = 0;
@@ -544,6 +756,8 @@ const syncTaggedEntryCollections = () => {
 };
 
 syncTaggedEntryCollections();
+
+ensureCashflowIntegrity();
 
 if (typeof window !== "undefined") {
   window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
@@ -2137,7 +2351,7 @@ function attachReportsHandlers() {
 
   const coa = () => loadJSON(COA_KEY).sort((a, b) => a.code.localeCompare(b.code));
   const journal = () => loadJSON(JOURNAL_KEY);
-  const cfRows = () => loadCashflow();
+  const cfRows = () => ensureCashflowIntegrity();
 
   const sortedFunds = () =>
     loadJSON(FUNDS_KEY, [])
