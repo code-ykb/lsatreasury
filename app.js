@@ -26,53 +26,16 @@ const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
 const loadCashflow = () => loadJSON(CASHFLOW_KEY);
 const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
-const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
-  const cf = loadCashflow();
-  const entry = {
-    date,
-    type,
-    bucket,
-    amount,
-    fund: fund ?? null,
-    note: note || "",
-  };
-  if (_tag) entry._tag = _tag;
-  if (_src) entry._src = _src;
-  cf.push(entry);
-  saveCashflow(cf);
-};
-const removeCashflowByTag = (tag) => {
-  if (!tag) return;
-  const filtered = loadCashflow().filter((row) => row._tag !== tag);
-  saveCashflow(filtered);
-};
-
-const loadCashflow = () => loadJSON(CASHFLOW_KEY);
-const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
-const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
-  const cf = loadCashflow();
-  const entry = {
-    date,
-    type,
-    bucket,
-    amount,
-    fund: fund ?? null,
-    note: note || "",
-  };
-  if (_tag) entry._tag = _tag;
-  if (_src) entry._src = _src;
-  cf.push(entry);
-  saveCashflow(cf);
-};
-const removeCashflowByTag = (tag) => {
-  if (!tag) return;
-  const filtered = loadCashflow().filter((row) => row._tag !== tag);
-  saveCashflow(filtered);
-};
-
-const loadCashflow = () => loadJSON(CASHFLOW_KEY);
-const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
-const postCashflow = ({ date, type, bucket, amount, fund = null, note = "", _tag = null, _src = null }) => {
+const postCashflow = ({
+  date,
+  type,
+  bucket,
+  amount,
+  fund = null,
+  note = "",
+  _tag = null,
+  _src = null,
+}) => {
   const cf = loadCashflow();
   const entry = {
     date,
@@ -212,84 +175,6 @@ function ensureSuperAdminAccount() {
     mutated = true;
   }
   if (current.pwHash !== SUPER_ADMIN_PASSWORD_HASH) {
-    current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
-    mutated = true;
-  }
-  if (current.builtIn !== true) {
-    current.builtIn = true;
-    mutated = true;
-  }
-  if (!current.name) {
-    current.name = SUPER_ADMIN_NAME;
-    mutated = true;
-  }
-  if (current.mustChangePW) {
-    current.mustChangePW = false;
-    mutated = true;
-  }
-
-  if (mutated) saveUsers(users);
-}
-
-ensureSuperAdminAccount();
-
-if (typeof window !== "undefined") {
-  window.__lsaAuth = Object.assign({}, window.__lsaAuth, {
-    ensureSuperAdminAccount,
-    formatRole,
-  });
-}
-
-const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
-const SUPER_ADMIN_NAME = "Super Admin";
-const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
-const SUPER_ADMIN_PASSWORD_HASH = "-1458677651"; // hash("SuperAdmin!2024")
-const ROLE_LABELS = {
-  [SUPER_ADMIN_ROLE]: "Super Admin",
-  "ADMIN": "Admin",
-  "LSA_MEMBER": "LSA Member",
-  "BELIEVER": "Believer",
-};
-const formatRole = (role) => ROLE_LABELS[role] || role || "";
-
-function ensureSuperAdminAccount() {
-  const users = loadUsers();
-  let idx = users.findIndex(
-    (u) => (u.email || "").toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
-  );
-
-  if (idx === -1) {
-    idx = users.findIndex((u) => u.builtIn && u.role === SUPER_ADMIN_ROLE);
-  }
-
-  if (idx === -1) {
-    users.push({
-      id: uuid(),
-      name: SUPER_ADMIN_NAME,
-      email: SUPER_ADMIN_EMAIL,
-      role: SUPER_ADMIN_ROLE,
-      believerId: "",
-      pwHash: SUPER_ADMIN_PASSWORD_HASH,
-      mustChangePW: false,
-      createdAt: new Date().toISOString(),
-      builtIn: true,
-    });
-    saveUsers(users);
-    return;
-  }
-
-  const current = users[idx];
-  let mutated = false;
-
-  if (current.role !== SUPER_ADMIN_ROLE) {
-    current.role = SUPER_ADMIN_ROLE;
-    mutated = true;
-  }
-  if ((current.email || "").toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
-    current.email = SUPER_ADMIN_EMAIL;
-    mutated = true;
-  }
-  if (!current.pwHash) {
     current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
     mutated = true;
   }
