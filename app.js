@@ -13,6 +13,7 @@ const COA_KEY             = "lsa_coa";
 const FUNDS_KEY           = "lsa_funds";
 const BELIEVERS_KEY       = "lsa_believers";
 const TRANSACTIONS_KEY    = "lsa_transactions";
+const POSTING_RULES_KEY   = "lsa_posting_rules";
 
 // Admin sender (for future use)
 const ADMIN_FROM_EMAIL = "treasurylocalspiritualassembly@gmail.com";
@@ -29,6 +30,8 @@ const loadCashflow = () => loadJSON(CASHFLOW_KEY);
 const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
 const loadTransactions = () => loadJSON(TRANSACTIONS_KEY);
 const saveTransactions = (rows) => saveJSON(TRANSACTIONS_KEY, rows);
+const loadPostingRules = () => loadJSON(POSTING_RULES_KEY);
+const savePostingRules = (rows) => saveJSON(POSTING_RULES_KEY, rows);
 const postCashflow = (
   {
   date,
@@ -3916,7 +3919,752 @@ function attachFundsHandlers() {
 }
 document.addEventListener("DOMContentLoaded", attachFundsHandlers);
 
-/* =================== (10) USERS (Admin: create user + reset link) =================== */
+
+/* =================== (10) POSTING RULES BUILDER =================== */
+const CASH_FLOW_OPTIONS = [
+  { value: "operating-inflow", label: "Operating inflow" },
+  { value: "operating-outflow", label: "Operating outflow" },
+  { value: "investing-inflow", label: "Investing inflow" },
+  { value: "investing-outflow", label: "Investing outflow" },
+  { value: "financing-inflow", label: "Financing inflow" },
+  { value: "financing-outflow", label: "Financing outflow" },
+  { value: "non-cash", label: "Non-cash / reclassification" },
+];
+
+const CREATE_ACCOUNT_OPTION = "__create_account__";
+const CREATE_FUND_OPTION = "__create_fund__";
+
+function ensurePostingRulesStore() {
+  const rules = loadPostingRules();
+  if (!Array.isArray(rules)) savePostingRules([]);
+}
+
+function listPostingAccounts() {
+  return loadJSON(COA_KEY, [])
+    .filter((acct) => acct && acct.code)
+    .slice()
+    .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
+}
+
+function accountDisplayLabel(account) {
+  if (!account) return "";
+  const suffix = account.fund ? ` (${account.fund})` : "";
+  return `${account.code} — ${account.name}${suffix}`;
+}
+
+function formatRuleCurrency(amount, currency = "MUR") {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return `${currency} 0.00`;
+  return `${currency} ${value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function createFundWithAccounts({ name, code }) {
+  const cleanName = (name || "").trim();
+  if (!cleanName) throw new Error("Enter a fund name.");
+  let cleanCode = (code || "").trim().toUpperCase();
+  if (!cleanCode) {
+    cleanCode = cleanName.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase();
+  }
+  if (!cleanCode) throw new Error("Unable to derive a fund code.");
+  ensureSeedDataStrict();
+  const funds = loadJSON(FUNDS_KEY, []);
+  if (funds.some((f) => f.code === cleanCode)) {
+    throw new Error("A fund with this code already exists.");
+  }
+  funds.push({ code: cleanCode, name: cleanName });
+  let coa = loadJSON(COA_KEY, []);
+  const idx = funds.findIndex((f) => f.code === cleanCode) + 1;
+  accountsForFund(cleanCode, cleanName, idx).forEach((acct) => {
+    if (!coa.find((existing) => existing.code === acct.code)) {
+      coa.push(acct);
+    }
+  });
+  saveJSON(FUNDS_KEY, _dedupeBy(funds, "code"));
+  saveJSON(COA_KEY, _dedupeBy(coa, "code"));
+  return { code: cleanCode, name: cleanName };
+}
+
+function createCustomAccountRecord({ code, name, type, fund }) {
+  const cleanCode = String(code || "").trim();
+  const cleanName = (name || "").trim();
+  const cleanType = (type || "").trim();
+  if (!cleanCode || !cleanName || !cleanType) {
+    throw new Error("Provide an account code, name, and type.");
+  }
+  const allowed = new Set(Object.values(ACCT_TYPES));
+  if (!allowed.has(cleanType)) throw new Error("Invalid account type.");
+  ensureSeedDataStrict();
+  const coa = loadJSON(COA_KEY, []);
+  if (coa.some((acct) => String(acct.code || "").trim() === cleanCode)) {
+    throw new Error("An account with this code already exists.");
+  }
+  const account = {
+    code: cleanCode,
+    name: cleanName,
+    type: cleanType,
+  };
+  if (fund) account.fund = fund;
+  coa.push(account);
+  saveJSON(COA_KEY, _dedupeBy(coa, "code"));
+  return account;
+}
+
+function normaliseRuleForDisplay(rule) {
+  if (!rule) return null;
+  const scenario = rule.scenario || {};
+  const currency = scenario.currency || rule.treatment?.currency || "MUR";
+  const lines = Array.isArray(rule.lines) && rule.lines.length
+    ? rule.lines
+    : ((rule.treatment && Array.isArray(rule.treatment.entries))
+        ? rule.treatment.entries.map((entry) => ({
+            debit: entry.debit || "",
+            credit: entry.credit || "",
+            amount: entry.amount || scenario.amount || rule.treatment.amount || 0,
+            memo: entry.note || "",
+            cashImpact: entry.cashImpact || "",
+          }))
+        : []);
+  return {
+    id: rule.id || uuid(),
+    name: rule.name || "Untitled rule",
+    triggers: Array.isArray(rule.triggers) ? rule.triggers : [],
+    notes: rule.notes || "",
+    scenario: {
+      title: scenario.title || scenario.name || "",
+      amount: scenario.amount || 0,
+      currency,
+      type: scenario.type || "",
+      fund: scenario.fund || "",
+      notes: scenario.notes || "",
+    },
+    lines,
+    createdAt: rule.createdAt || null,
+    createdBy: rule.createdBy || "",
+  };
+}
+
+function renderRuleList(container) {
+  if (!container) return;
+  const rules = loadPostingRules();
+  if (!Array.isArray(rules) || rules.length === 0) {
+    container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-diagram-project"></i><p>No posting rules yet. Save one to reuse it across journals, cash flow, and reports.</p></div>';
+    return;
+  }
+  const normalised = rules
+    .map(normaliseRuleForDisplay)
+    .filter(Boolean)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  container.innerHTML = "";
+  const accounts = listPostingAccounts();
+  const accountMap = new Map(accounts.map((acct) => [acct.code, acct]));
+  normalised.forEach((rule) => {
+    const card = document.createElement("div");
+    card.className = "rule-card-item";
+    const triggerLabel = rule.triggers.length ? rule.triggers.join(", ") : "—";
+    const linesHtml = rule.lines
+      .map((line) => {
+        const debit = accountMap.get(line.debit);
+        const credit = accountMap.get(line.credit);
+        const debitLabel = debit ? accountDisplayLabel(debit) : line.debit || "(not set)";
+        const creditLabel = credit ? accountDisplayLabel(credit) : line.credit || "(not set)";
+        const cashImpact = CASH_FLOW_OPTIONS.find((opt) => opt.value === line.cashImpact)?.label || "—";
+        const memo = (line.memo || "").trim();
+        return `<div class=\"rule-entry\"><div><strong>Debit:</strong> ${escapeHtml(debitLabel)}</div><div><strong>Credit:</strong> ${escapeHtml(creditLabel)}</div><div><strong>Amount:</strong> ${escapeHtml(formatRuleCurrency(line.amount, rule.scenario.currency || "MUR"))}</div><div><strong>Cash impact:</strong> ${escapeHtml(cashImpact)}</div>${memo ? `<div>${escapeHtml(memo)}</div>` : ""}</div>`;
+      })
+      .join("");
+    const createdOn = rule.createdAt ? new Date(rule.createdAt).toLocaleString() : "";
+    const metaParts = [];
+    if (rule.scenario.fund) metaParts.push(`Fund: ${escapeHtml(rule.scenario.fund)}`);
+    if (rule.scenario.type) metaParts.push(`Type: ${escapeHtml(rule.scenario.type)}`);
+    card.innerHTML = `
+      <h3>${escapeHtml(rule.name)}</h3>
+      <div class=\"meta\">
+        <span>Triggers: ${escapeHtml(triggerLabel)}</span>
+        ${createdOn ? `<span>Created: ${escapeHtml(createdOn)}</span>` : ""}
+        ${metaParts.length ? `<span>${metaParts.join(' • ')}</span>` : ""}
+      </div>
+      ${rule.scenario.title ? `<p>${escapeHtml(rule.scenario.title)}</p>` : ""}
+      ${rule.notes ? `<p class=\"field-hint\">${escapeHtml(rule.notes)}</p>` : ""}
+      <div class=\"entry-list\">${linesHtml}</div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function attachPostingRulesHandlers() {
+  const page = document.getElementById("postingRulesPage");
+  if (!page) return;
+
+  const rawSession = localStorage.getItem(SESSION_KEY);
+  if (!rawSession) {
+    window.location.href = "index.html";
+    return;
+  }
+  const session = JSON.parse(rawSession);
+  const who = document.getElementById("whoami");
+  if (who) who.textContent = `${session.user} (${session.role})`;
+  document.getElementById("logoutBtn")?.addEventListener("click", () => {
+    localStorage.removeItem(SESSION_KEY);
+    window.location.href = "index.html";
+  });
+
+  ensureSeedDataStrict();
+  ensurePostingRulesStore();
+
+  const generalFund = getGeneralFund();
+  const builderState = {
+    scenario: {
+      title: "",
+      amount: 0,
+      currency: "MUR",
+      type: "payment",
+      fund: generalFund?.code || "",
+      notes: "",
+    },
+    lines: [],
+  };
+
+  const elements = {
+    title: document.getElementById("prTitle"),
+    amount: document.getElementById("prAmount"),
+    currency: document.getElementById("prCurrency"),
+    type: document.getElementById("prType"),
+    fund: document.getElementById("prFund"),
+    notes: document.getElementById("prNotes"),
+    addLine: document.getElementById("prAddLine"),
+    lineContainer: document.getElementById("prLineContainer"),
+    ruleName: document.getElementById("prRuleName"),
+    ruleTriggers: document.getElementById("prRuleTriggers"),
+    ruleNotes: document.getElementById("prRuleNotes"),
+    createRule: document.getElementById("prCreateRule"),
+    ruleList: document.getElementById("prRuleList"),
+    fundModal: document.getElementById("fundModal"),
+    fundModalForm: document.getElementById("fundModalForm"),
+    fundModalName: document.getElementById("fundModalName"),
+    fundModalCode: document.getElementById("fundModalCode"),
+    accountModal: document.getElementById("accountModal"),
+    accountModalForm: document.getElementById("accountModalForm"),
+    accountModalName: document.getElementById("accountModalName"),
+    accountModalCode: document.getElementById("accountModalCode"),
+    accountModalType: document.getElementById("accountModalType"),
+    accountModalFund: document.getElementById("accountModalFund"),
+    openFundModal: document.getElementById("openFundModal"),
+    openAccountModal: document.getElementById("openAccountModal"),
+  };
+
+  const cashflowOptionsHtml = ['<option value="">— Select impact —</option>', ...CASH_FLOW_OPTIONS.map((opt) => `<option value="${opt.value}">${opt.label}</option>`)].join("");
+
+  let pendingAccountAssignment = null;
+
+  function createEmptyLine() {
+    return {
+      debit: "",
+      credit: "",
+      amount: builderState.scenario.amount || 0,
+      memo: "",
+      cashImpact: "",
+    };
+  }
+
+  function refreshFundSelects(selected) {
+    const funds = loadJSON(FUNDS_KEY, [])
+      .slice()
+      .sort((a, b) => a.code.localeCompare(b.code));
+    const fundOptions = funds
+      .map((fund) => `<option value="${escapeHtml(fund.code)}">${escapeHtml(fund.code)} — ${escapeHtml(fund.name)}</option>`)
+      .join("");
+    if (elements.fund) {
+      const createLabel = `<option value="${CREATE_FUND_OPTION}">+ Create new fund…</option>`;
+      const emptyLabel = '<option value="">— Select fund —</option>';
+      elements.fund.innerHTML = `${emptyLabel}${fundOptions ? createLabel + fundOptions : createLabel}`;
+      const fallback = funds.length ? funds[0].code : "";
+      const targetValue = selected || builderState.scenario.fund || fallback;
+      if (targetValue) {
+        elements.fund.value = targetValue;
+        if (elements.fund.value !== targetValue) {
+          elements.fund.value = fallback;
+          builderState.scenario.fund = fallback;
+        }
+      } else {
+        elements.fund.value = "";
+      }
+      const appliedFund = elements.fund.value;
+      if (appliedFund && appliedFund !== CREATE_FUND_OPTION) {
+        builderState.scenario.fund = appliedFund;
+      }
+    }
+    if (elements.accountModalFund) {
+      elements.accountModalFund.innerHTML = `<option value="">General / Unfunded</option>` + fundOptions;
+    }
+  }
+
+  function renderLineRows() {
+    if (!Array.isArray(builderState.lines) || builderState.lines.length === 0) {
+      builderState.lines = [createEmptyLine()];
+    }
+    const accounts = listPostingAccounts();
+    const accountOptions = [
+      '<option value="">— Select account —</option>',
+      `<option value="${CREATE_ACCOUNT_OPTION}">+ Create new account…</option>`,
+      ...accounts.map((acct) => `<option value="${escapeHtml(acct.code)}">${escapeHtml(accountDisplayLabel(acct))}</option>`),
+    ].join("");
+    const rows = builderState.lines
+      .map((line, idx) => {
+        const disableRemove = builderState.lines.length === 1 ? ' disabled' : '';
+        const amountValue = Number.isFinite(Number(line.amount)) && Number(line.amount) !== 0
+          ? Number(line.amount)
+          : '';
+        return `<div class="movement-row" data-index="${idx}" role="group">
+          <div class="movement-field">
+            <label>Money goes to (Debit)</label>
+            <select data-field="debit" data-index="${idx}">${accountOptions}</select>
+          </div>
+          <div class="movement-field">
+            <label>Money comes from (Credit)</label>
+            <select data-field="credit" data-index="${idx}">${accountOptions}</select>
+          </div>
+          <div class="movement-field">
+            <label>Amount</label>
+            <input type="number" min="0" step="0.01" data-field="amount" data-index="${idx}" value="${amountValue}" />
+          </div>
+          <div class="movement-field">
+            <label>Cash flow impact</label>
+            <select data-field="cashImpact" data-index="${idx}">${cashflowOptionsHtml}</select>
+          </div>
+          <div class="movement-field span-2">
+            <label>Memo (optional)</label>
+            <input type="text" data-field="memo" data-index="${idx}" value="${escapeHtml(line.memo || '')}" placeholder="Narration for this entry" />
+          </div>
+          <div class="movement-actions">
+            <button type="button" class="line-remove" data-field="remove" data-index="${idx}"${disableRemove} aria-label="Remove movement"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+        </div>`;
+      })
+      .join("");
+    if (elements.lineContainer) {
+      elements.lineContainer.innerHTML = rows;
+      elements.lineContainer.querySelectorAll('select[data-field="debit"]').forEach((sel) => {
+        const idx = Number(sel.dataset.index);
+        sel.value = builderState.lines[idx]?.debit || "";
+      });
+      elements.lineContainer.querySelectorAll('select[data-field="credit"]').forEach((sel) => {
+        const idx = Number(sel.dataset.index);
+        sel.value = builderState.lines[idx]?.credit || "";
+      });
+      elements.lineContainer.querySelectorAll('select[data-field="cashImpact"]').forEach((sel) => {
+        const idx = Number(sel.dataset.index);
+        sel.value = builderState.lines[idx]?.cashImpact || "";
+      });
+    }
+    updateMovementSummary();
+    updateRulePreview();
+    updateCreateButton();
+  }
+
+  function updateCreateButton() {
+    if (!elements.createRule) return;
+    const hasName = (elements.ruleName?.value || "").trim().length > 0;
+    const hasTitle = (builderState.scenario.title || "").trim().length > 0;
+    const validLine = builderState.lines.some((line) => line.debit && line.credit && Number(line.amount) > 0);
+    elements.createRule.disabled = !(hasName && hasTitle && validLine);
+  }
+
+  function updateScenarioHighlights() {
+    const container = document.getElementById("prScenarioHighlights");
+    if (!container) return;
+    const scenario = builderState.scenario;
+    const title = scenario.title ? escapeHtml(scenario.title) : "Untitled scenario";
+    const amountNumber = Number(scenario.amount);
+    const currency = (scenario.currency || "MUR").toUpperCase();
+    const amountLabel = Number.isFinite(amountNumber) && amountNumber > 0
+      ? escapeHtml(formatRuleCurrency(amountNumber, scenario.currency || "MUR"))
+      : "Set a reference amount";
+    const funds = loadJSON(FUNDS_KEY, []);
+    const fundRecord = funds.find((f) => f.code === scenario.fund);
+    const fundLabel = fundRecord
+      ? `${escapeHtml(fundRecord.code)} — ${escapeHtml(fundRecord.name)}`
+      : scenario.fund
+        ? escapeHtml(scenario.fund)
+        : "Select a fund";
+    const typeLabels = {
+      payment: "Payment (outgoing)",
+      receipt: "Incoming receipt",
+      transfer: "Internal transfer",
+      adjustment: "Adjustment / journal",
+    };
+    const typeLabel = typeLabels[scenario.type] || (scenario.type ? escapeHtml(scenario.type) : "Choose a type");
+    const noteSnippet = (scenario.notes || "").trim();
+    const noteLabel = noteSnippet
+      ? `<span class="highlight-hint">${escapeHtml(noteSnippet.length > 80 ? `${noteSnippet.slice(0, 77)}…` : noteSnippet)}</span>`
+      : "";
+    container.innerHTML = `
+      <div class="highlight-grid">
+        <div class="highlight-item">
+          <span class="highlight-label">Scenario</span>
+          <strong>${title}</strong>
+          ${noteLabel}
+        </div>
+        <div class="highlight-item">
+          <span class="highlight-label">Reference amount</span>
+          <strong>${amountLabel}</strong>
+          <span class="highlight-hint">Currency: ${escapeHtml(currency)}</span>
+        </div>
+        <div class="highlight-item">
+          <span class="highlight-label">Primary fund</span>
+          <strong>${fundLabel}</strong>
+        </div>
+        <div class="highlight-item">
+          <span class="highlight-label">Transaction type</span>
+          <strong>${typeLabel}</strong>
+        </div>
+      </div>
+    `;
+  }
+
+  function updateMovementSummary() {
+    const summaryEl = document.getElementById("prMovementSummary");
+    if (!summaryEl) return;
+    const lines = Array.isArray(builderState.lines) ? builderState.lines : [];
+    if (lines.length === 0) {
+      summaryEl.innerHTML = '<div class="summary-pill warn">Add at least one movement to begin the posting rule.</div>';
+      return;
+    }
+    const cashflowLabels = new Map(CASH_FLOW_OPTIONS.map((opt) => [opt.value, opt.label]));
+    const completeLines = lines.filter((line) => line.debit && line.credit && Number(line.amount) > 0);
+    const incomplete = lines.length - completeLines.length;
+    const statusClass = incomplete === 0 ? "ready" : "warn";
+    const statusText = incomplete === 0
+      ? "All movements look balanced."
+      : `${incomplete} movement${incomplete === 1 ? "" : "s"} still need details.`;
+    const totalAmount = lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
+    const currency = builderState.scenario.currency || "MUR";
+    const accounts = new Set();
+    lines.forEach((line) => {
+      if (line.debit) accounts.add(line.debit);
+      if (line.credit) accounts.add(line.credit);
+    });
+    const cashTags = Array.from(new Set(lines.map((line) => line.cashImpact).filter(Boolean)));
+    const cashLabel = cashTags.length
+      ? cashTags.map((tag) => cashflowLabels.get(tag) || tag).join(', ')
+      : 'Tag each movement for cash flow';
+    summaryEl.innerHTML = `
+      <div class="summary-pill ${statusClass}">${escapeHtml(statusText)}</div>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <span class="summary-label">Total amount mapped</span>
+          <strong>${escapeHtml(formatRuleCurrency(totalAmount, currency))}</strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Accounts touched</span>
+          <strong>${accounts.size}</strong>
+          <span class="summary-hint">Debit &amp; credit combined</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Cash flow tags</span>
+          <strong>${cashTags.length ? escapeHtml(String(cashTags.length)) : 'Not set'}</strong>
+          <span class="summary-hint">${escapeHtml(cashLabel)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function updateRulePreview() {
+    const previewEl = document.getElementById("prRulePreview");
+    if (!previewEl) return;
+    const ruleName = (elements.ruleName?.value || "").trim();
+    const triggers = (elements.ruleTriggers?.value || "")
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const notes = (elements.ruleNotes?.value || "").trim();
+    const scenarioTitle = (builderState.scenario.title || "").trim();
+    const completeLines = builderState.lines.filter((line) => line.debit && line.credit && Number(line.amount) > 0);
+    const accounts = listPostingAccounts();
+    const accountMap = new Map(accounts.map((acct) => [acct.code, accountDisplayLabel(acct)]));
+    const cashflowLabels = new Map(CASH_FLOW_OPTIONS.map((opt) => [opt.value, opt.label]));
+    const currency = builderState.scenario.currency || "MUR";
+    const lineItems = completeLines
+      .map((line) => {
+        const debitLabel = accountMap.get(line.debit) || line.debit || "Debit account";
+        const creditLabel = accountMap.get(line.credit) || line.credit || "Credit account";
+        const cashLabel = cashflowLabels.get(line.cashImpact) || "Unclassified";
+        const memo = (line.memo || "").trim();
+        const memoHtml = memo ? `<span class="preview-note">${escapeHtml(memo)}</span>` : "";
+        return `<li><span class="preview-amount">${escapeHtml(formatRuleCurrency(line.amount, currency))}</span> — <strong>${escapeHtml(debitLabel)}</strong> / <strong>${escapeHtml(creditLabel)}</strong><span class="preview-hint">${escapeHtml(cashLabel)}</span>${memoHtml}</li>`;
+      })
+      .join("");
+    const triggerHtml = triggers.length
+      ? `<div class="preview-chips">${triggers.map((trigger) => `<span>${escapeHtml(trigger)}</span>`).join("")}</div>`
+      : "";
+    const description = notes || builderState.scenario.notes || "Ready to automate this transaction.";
+    const heading = ruleName || scenarioTitle || "Untitled rule";
+    const body = lineItems || '<li>Complete the movements to see the journal preview.</li>';
+    previewEl.innerHTML = `
+      <div class="preview-card">
+        <div class="preview-head">
+          <strong>${escapeHtml(heading)}</strong>
+          ${triggerHtml}
+        </div>
+        <div class="preview-body">
+          <p>${escapeHtml(description)}</p>
+          <ul>${body}</ul>
+        </div>
+      </div>
+    `;
+  }
+
+  function syncScenarioToInputs() {
+    if (elements.title) elements.title.value = builderState.scenario.title;
+    if (elements.amount) elements.amount.value = builderState.scenario.amount || "";
+    if (elements.currency) elements.currency.value = builderState.scenario.currency;
+    if (elements.type) elements.type.value = builderState.scenario.type;
+    refreshFundSelects(builderState.scenario.fund);
+    if (elements.notes) elements.notes.value = builderState.scenario.notes;
+    updateScenarioHighlights();
+  }
+
+  function handleScenarioChange(field, value) {
+    if (field === 'amount') {
+      const prev = builderState.scenario.amount || 0;
+      const next = Number(value) || 0;
+      builderState.scenario.amount = next;
+      if (prev === 0) {
+        builderState.lines.forEach((line) => {
+          if (!Number(line.amount)) line.amount = next;
+        });
+      }
+    } else if (field === 'currency') {
+      builderState.scenario.currency = (value || 'MUR').trim() || 'MUR';
+    } else if (field === 'type') {
+      builderState.scenario.type = value;
+    } else if (field === 'fund') {
+      builderState.scenario.fund = value;
+    } else if (field === 'notes') {
+      builderState.scenario.notes = value;
+    } else if (field === 'title') {
+      builderState.scenario.title = value;
+    }
+    updateScenarioHighlights();
+    updateMovementSummary();
+    updateRulePreview();
+    updateCreateButton();
+  }
+
+  elements.title?.addEventListener('input', (e) => {
+    handleScenarioChange('title', e.target.value.trim());
+  });
+  elements.amount?.addEventListener('input', (e) => {
+    handleScenarioChange('amount', e.target.value);
+  });
+  elements.currency?.addEventListener('input', (e) => {
+    handleScenarioChange('currency', e.target.value);
+  });
+  elements.type?.addEventListener('change', (e) => {
+    handleScenarioChange('type', e.target.value);
+  });
+  elements.fund?.addEventListener('change', (e) => {
+    const value = e.target.value;
+    if (value === CREATE_FUND_OPTION) {
+      elements.fundModalForm?.reset();
+      openModal(elements.fundModal);
+      e.target.value = builderState.scenario.fund || "";
+      return;
+    }
+    handleScenarioChange('fund', value);
+  });
+  elements.notes?.addEventListener('input', (e) => {
+    handleScenarioChange('notes', e.target.value);
+  });
+
+  elements.addLine?.addEventListener('click', () => {
+    builderState.lines.push(createEmptyLine());
+    renderLineRows();
+  });
+
+  elements.lineContainer?.addEventListener('change', (e) => {
+    const field = e.target.dataset.field;
+    const idx = Number(e.target.dataset.index);
+    if (Number.isNaN(idx) || !field) return;
+    if (!builderState.lines[idx]) return;
+    const value = e.target.value;
+    if ((field === 'debit' || field === 'credit') && value === CREATE_ACCOUNT_OPTION) {
+      pendingAccountAssignment = { field, idx };
+      elements.accountModalForm?.reset();
+      refreshFundSelects(builderState.scenario.fund);
+      openModal(elements.accountModal);
+      e.target.value = builderState.lines[idx][field] || '';
+      return;
+    }
+    if (field === 'debit' || field === 'credit' || field === 'cashImpact') {
+      builderState.lines[idx][field] = value;
+    }
+    updateMovementSummary();
+    updateRulePreview();
+    updateCreateButton();
+  });
+
+  elements.lineContainer?.addEventListener('input', (e) => {
+    const field = e.target.dataset.field;
+    const idx = Number(e.target.dataset.index);
+    if (Number.isNaN(idx) || !field) return;
+    if (!builderState.lines[idx]) return;
+    if (field === 'amount') {
+      builderState.lines[idx].amount = Number(e.target.value) || 0;
+    } else if (field === 'memo') {
+      builderState.lines[idx].memo = e.target.value;
+    }
+    updateMovementSummary();
+    updateRulePreview();
+    updateCreateButton();
+  });
+
+  elements.lineContainer?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.line-remove');
+    if (!btn) return;
+    if (btn.disabled) return;
+    const idx = Number(btn.dataset.index);
+    if (Number.isNaN(idx)) return;
+    builderState.lines.splice(idx, 1);
+    if (builderState.lines.length === 0) builderState.lines.push(createEmptyLine());
+    renderLineRows();
+  });
+
+  const openModal = (modal) => {
+    if (!modal) return;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+  };
+  const closeModal = (modal) => {
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+  };
+
+  elements.openFundModal?.addEventListener('click', () => {
+    elements.fundModalForm?.reset();
+    openModal(elements.fundModal);
+  });
+  elements.openAccountModal?.addEventListener('click', () => {
+    pendingAccountAssignment = null;
+    elements.accountModalForm?.reset();
+    refreshFundSelects(builderState.scenario.fund);
+    openModal(elements.accountModal);
+  });
+
+  document.querySelectorAll('[data-close-modal]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.closeModal);
+      closeModal(target);
+    });
+  });
+
+  elements.fundModalForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    try {
+      const fund = createFundWithAccounts({
+        name: elements.fundModalName?.value || '',
+        code: elements.fundModalCode?.value || '',
+      });
+      refreshFundSelects(fund.code);
+      builderState.scenario.fund = fund.code;
+      if (elements.fund) elements.fund.value = fund.code;
+      updateScenarioHighlights();
+      renderLineRows();
+      closeModal(elements.fundModal);
+      alert('Fund created successfully.');
+    } catch (err) {
+      alert(err.message || 'Unable to create fund.');
+    }
+  });
+
+  elements.accountModalForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    try {
+      const account = createCustomAccountRecord({
+        code: elements.accountModalCode?.value || '',
+        name: elements.accountModalName?.value || '',
+        type: elements.accountModalType?.value || '',
+        fund: elements.accountModalFund?.value || '',
+      });
+      if (pendingAccountAssignment) {
+        const { field, idx } = pendingAccountAssignment;
+        if (builderState.lines[idx]) {
+          builderState.lines[idx][field] = account.code;
+        }
+      }
+      pendingAccountAssignment = null;
+      renderLineRows();
+      closeModal(elements.accountModal);
+      alert(`Account ${account.code} created.`);
+    } catch (err) {
+      alert(err.message || 'Unable to create account.');
+    }
+  });
+
+  [elements.ruleName, elements.ruleTriggers, elements.ruleNotes].forEach((el) => {
+    el?.addEventListener('input', () => {
+      updateRulePreview();
+      updateCreateButton();
+    });
+  });
+
+  elements.createRule?.addEventListener('click', () => {
+    if (elements.createRule.disabled) return;
+    const name = (elements.ruleName?.value || '').trim();
+    const triggers = (elements.ruleTriggers?.value || '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const notes = (elements.ruleNotes?.value || '').trim();
+    const lines = builderState.lines.map((line) => ({
+      debit: line.debit,
+      credit: line.credit,
+      amount: Number(line.amount) || 0,
+      memo: line.memo || '',
+      cashImpact: line.cashImpact || '',
+    }));
+    const rule = {
+      id: uuid(),
+      name,
+      triggers,
+      notes,
+      scenario: { ...builderState.scenario },
+      lines,
+      treatment: {
+        amount: builderState.scenario.amount || 0,
+        currency: builderState.scenario.currency || 'MUR',
+        narrative: builderState.scenario.notes || builderState.scenario.title || '',
+        entries: lines.map((line) => ({
+          debit: line.debit,
+          credit: line.credit,
+          amount: line.amount,
+          note: line.memo,
+          cashImpact: line.cashImpact,
+        })),
+      },
+      createdAt: new Date().toISOString(),
+      createdBy: session.user,
+    };
+    const existing = loadPostingRules();
+    existing.push(rule);
+    savePostingRules(existing);
+    renderRuleList(elements.ruleList);
+    alert('Posting rule saved.');
+    updateCreateButton();
+  });
+
+  builderState.lines.push(createEmptyLine());
+  syncScenarioToInputs();
+  renderLineRows();
+  renderRuleList(elements.ruleList);
+  updateCreateButton();
+}
+
+document.addEventListener("DOMContentLoaded", attachPostingRulesHandlers);
+/* =================== (11) USERS (Admin: create user + reset link) =================== */
 function attachUsersHandlers() {
   const sec = document.getElementById("usersSection");
   if (!sec) return;
