@@ -233,6 +233,12 @@ label {
   font-weight: 600;
 }
 
+.label-optional {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .field-hint {
   display: block;
   margin-top: 4px;
@@ -422,6 +428,16 @@ textarea:focus {
   padding: 20px 18px 18px;
   position: relative;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+}
+
+.movement-seq {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
 
 .movement-field {

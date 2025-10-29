@@ -80,8 +80,9 @@
               <input id="prTitle" type="text" placeholder="e.g. Payment to vendor" />
             </div>
             <div class="form-col">
-              <label for="prAmount">Reference amount</label>
-              <input id="prAmount" type="number" step="0.01" min="0" placeholder="0.00" />
+              <label for="prAmount">Reference amount <span class="label-optional">(optional)</span></label>
+              <input id="prAmount" type="number" step="0.01" min="0" placeholder="0.00" aria-describedby="prAmountHelp" />
+              <span id="prAmountHelp" class="field-hint">Use when a typical amount helps describe the scenario. Leave blank when the value varies.</span>
             </div>
             <div class="form-col">
               <label for="prCurrency">Currency</label>
