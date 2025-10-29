@@ -13,6 +13,7 @@ const COA_KEY             = "lsa_coa";
 const FUNDS_KEY           = "lsa_funds";
 const BELIEVERS_KEY       = "lsa_believers";
 const TRANSACTIONS_KEY    = "lsa_transactions";
+const POSTING_RULES_KEY   = "lsa_posting_rules";
 
 // Admin sender (for future use)
 const ADMIN_FROM_EMAIL = "treasurylocalspiritualassembly@gmail.com";
@@ -29,6 +30,8 @@ const loadCashflow = () => loadJSON(CASHFLOW_KEY);
 const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
 const loadTransactions = () => loadJSON(TRANSACTIONS_KEY);
 const saveTransactions = (rows) => saveJSON(TRANSACTIONS_KEY, rows);
+const loadPostingRules = () => loadJSON(POSTING_RULES_KEY);
+const savePostingRules = (rows) => saveJSON(POSTING_RULES_KEY, rows);
 const postCashflow = (
   {
   date,
@@ -3916,7 +3919,999 @@ function attachFundsHandlers() {
 }
 document.addEventListener("DOMContentLoaded", attachFundsHandlers);
 
-/* =================== (10) USERS (Admin: create user + reset link) =================== */
+
+/* =================== (10) POSTING RULES STUDIO =================== */
+const IFRS_GUIDANCE_BY_INTENT = {
+  "recognize-income": [
+    {
+      standard: "IFRS 15 — Revenue from Contracts with Customers",
+      summary:
+        "Recognize revenue when the entity controls the contribution and all performance obligations are satisfied.",
+    },
+    {
+      standard: "IAS 1 — Presentation of Financial Statements",
+      summary: "Present contributions consistently within the statement of profit or loss for the related fund.",
+    },
+  ],
+  "record-expense": [
+    {
+      standard: "IAS 1 — Presentation of Financial Statements",
+      summary: "Record expenses in the period incurred and present them in the statement of activities.",
+    },
+    {
+      standard: "IAS 37 — Provisions, Contingent Liabilities and Contingent Assets",
+      summary: "Recognise obligations when probable and measurable to avoid understating liabilities.",
+    },
+  ],
+  "defer-income": [
+    {
+      standard: "IFRS 15 — Revenue from Contracts with Customers",
+      summary: "Use contract liabilities until earmarked funds are utilised for their specific purpose.",
+    },
+    {
+      standard: "IAS 20 — Accounting for Government Grants and Disclosure of Government Assistance",
+      summary: "Defer income when related conditions are outstanding and release it as the activity occurs.",
+    },
+  ],
+  "external-liability": [
+    {
+      standard: "IAS 37 — Provisions, Contingent Liabilities and Contingent Assets",
+      summary: "Treat amounts held for third parties as obligations until remitted.",
+    },
+    {
+      standard: "IFRS 9 — Financial Instruments",
+      summary: "Measure payables at amortised cost when the entity acts as custodian of funds.",
+    },
+  ],
+  "transfer-to-fund": [
+    {
+      standard: "IAS 1 — Presentation of Financial Statements",
+      summary: "Reclassify internal movements between bank accounts without affecting net income.",
+    },
+  ],
+  "transfer-from-fund": [
+    {
+      standard: "IAS 1 — Presentation of Financial Statements",
+      summary: "Return funds from restricted bank accounts to operating cash with appropriate disclosures.",
+    },
+  ],
+  "transfer-cash-to-bank": [
+    {
+      standard: "IAS 7 — Statement of Cash Flows",
+      summary: "Deposits convert cash equivalents between forms and remain within operating activities.",
+    },
+  ],
+  "transfer-bank-to-cash": [
+    {
+      standard: "IAS 7 — Statement of Cash Flows",
+      summary: "Withdrawals from bank to cash on hand are internal reallocations with no income effect.",
+    },
+  ],
+  "settle-special-liability": [
+    {
+      standard: "IFRS 15 — Revenue from Contracts with Customers",
+      summary: "Release deferred revenue when the promised activity to beneficiaries has been satisfied.",
+    },
+  ],
+  "settle-external-liability": [
+    {
+      standard: "IAS 37 — Provisions, Contingent Liabilities and Contingent Assets",
+      summary: "Derecognise the payable when amounts collected for third parties are remitted.",
+    },
+  ],
+};
+
+function ensurePostingRulesStore() {
+  const rules = loadPostingRules();
+  if (!Array.isArray(rules)) savePostingRules([]);
+}
+
+function prListAccounts() {
+  return loadJSON(COA_KEY, [])
+    .filter((acct) => acct && acct.code)
+    .slice()
+    .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
+}
+
+function prAccountLabel(code) {
+  if (!code) return "(not specified)";
+  const acct = acctByCode(code);
+  return acct ? `${acct.code} — ${acct.name}` : code;
+}
+
+function prFindFundIncomeAccount(fundCode) {
+  const normalized = typeof fundCode === "string" ? fundCode.trim() : "";
+  return prListAccounts().find(
+    (acct) => acct.fund === normalized && acct.type === ACCT_TYPES.INCOME
+  );
+}
+
+function prFindFundExpenseAccount(fundCode) {
+  const normalized = typeof fundCode === "string" ? fundCode.trim() : "";
+  return prListAccounts().find(
+    (acct) => acct.fund === normalized && acct.type === ACCT_TYPES.EXPENSE
+  );
+}
+
+function prFindFundBankAccount(fundCode) {
+  const normalized = typeof fundCode === "string" ? fundCode.trim() : "";
+  if (!normalized) return null;
+  return (
+    prListAccounts().find(
+      (acct) =>
+        acct.fund === normalized &&
+        acct.type === ACCT_TYPES.ASSET &&
+        String(acct.code || "").startsWith("11")
+    ) || null
+  );
+}
+
+function prPickOperatingBankAccount() {
+  return getOperatingBankAccount();
+}
+
+function prPickCashOnHandAccount() {
+  const list = prListAccounts();
+  return (
+    list.find((acct) => String(acct.code || "").trim() === "1010") ||
+    list.find((acct) => acct.type === ACCT_TYPES.ASSET && /cash/i.test(acct.name || "")) ||
+    null
+  );
+}
+
+function prFindLiabilityAccount(codeHint) {
+  const list = prListAccounts();
+  if (codeHint) {
+    const direct = list.find((acct) => String(acct.code || "").trim() === String(codeHint));
+    if (direct) return direct;
+  }
+  return list.find((acct) => acct.type === ACCT_TYPES.LIABILITY) || null;
+}
+
+function prFormatCurrency(amount, currency = "MUR") {
+  const amt = Number(amount);
+  if (!Number.isFinite(amt)) return `${currency} 0.00`;
+  const formatted = amt.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${currency} ${formatted}`;
+}
+
+function prDefaultScenario() {
+  const fund = getGeneralFund();
+  return {
+    title: "Contribution received during Feast",
+    amount: 1500,
+    currency: "MUR",
+    fund: fund?.code || "",
+    channel: "Operating bank",
+    counterparty: "Community believer",
+    notes: "General donation deposited the next day.",
+    intent: "recognize-income",
+  };
+}
+
+function prEscapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => {
+    const map = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return map[ch] || ch;
+  });
+}
+
+function prRefreshTreatmentNarrative(treatment, scenario) {
+  if (!treatment) return treatment;
+  const amountLabel = prFormatCurrency(
+    treatment.amount ?? scenario.amount ?? 0,
+    treatment.currency || scenario.currency || "MUR"
+  );
+  const fundList = loadJSON(FUNDS_KEY, []);
+  const fund = fundList.find((f) => f.code === scenario.fund);
+  const fundLabel = fund ? `${fund.code} — ${fund.name}` : scenario.fund || "General Fund";
+  const entry = (treatment.entries || [])[0] || {};
+  const debitLabel = prAccountLabel(entry.debit);
+  const creditLabel = prAccountLabel(entry.credit);
+  switch (treatment.intent) {
+    case "recognize-income":
+      treatment.narrative = `Recognize the contribution of ${amountLabel} into ${fundLabel} by debiting ${debitLabel} and crediting ${creditLabel}.`;
+      break;
+    case "defer-income":
+      treatment.narrative = `Hold the contribution of ${amountLabel} in ${creditLabel} until the designated activity for ${fundLabel} is delivered.`;
+      break;
+    case "external-liability":
+      treatment.narrative = `Record ${amountLabel} as a payable in ${creditLabel} until it is remitted to the external beneficiary.`;
+      break;
+    case "record-expense":
+      treatment.narrative = `Recognize an expense of ${amountLabel} by debiting ${debitLabel} and crediting ${creditLabel}.`;
+      break;
+    case "transfer-to-fund":
+      treatment.narrative = `Reclassify ${amountLabel} from ${creditLabel} into ${debitLabel} for ${fundLabel}.`;
+      break;
+    case "transfer-from-fund":
+      treatment.narrative = `Move ${amountLabel} back to ${debitLabel} from ${creditLabel} for use in operations.`;
+      break;
+    case "transfer-cash-to-bank":
+      treatment.narrative = `Deposit ${amountLabel} from ${creditLabel} into ${debitLabel}.`;
+      break;
+    case "transfer-bank-to-cash":
+      treatment.narrative = `Withdraw ${amountLabel} from ${creditLabel} into ${debitLabel} for teller activity.`;
+      break;
+    case "settle-special-liability":
+      treatment.narrative = `Settle the deferred contribution of ${amountLabel} by debiting ${debitLabel} and crediting ${creditLabel}.`;
+      break;
+    case "settle-external-liability":
+      treatment.narrative = `Clear the external payable of ${amountLabel} by debiting ${debitLabel} and crediting ${creditLabel}.`;
+      break;
+    default:
+      treatment.narrative =
+        treatment.narrative || `Review the proposed entry for ${amountLabel} and adjust accounts as needed.`;
+      break;
+  }
+  return treatment;
+}
+
+function prTreatmentFromIntent(scenario) {
+  const intent = scenario.intent || "recognize-income";
+  const amount = Math.abs(Number(scenario.amount) || 0);
+  const currency = scenario.currency || "MUR";
+  const fundCode = scenario.fund || (getGeneralFund()?.code || "");
+  const operatingBank = prPickOperatingBankAccount();
+  const cashOnHand = prPickCashOnHandAccount();
+  const fundBank = prFindFundBankAccount(fundCode) || operatingBank;
+  const incomeAcct = prFindFundIncomeAccount(fundCode);
+  const expenseAcct = prFindFundExpenseAccount(fundCode);
+  const specialLiability = prFindLiabilityAccount("2300");
+  const externalLiability = prFindLiabilityAccount("2400");
+  const preferCash = (scenario.channel || "").toLowerCase().includes("cash");
+  const assetAccount = preferCash ? cashOnHand || operatingBank : operatingBank || cashOnHand;
+
+  const treatment = {
+    id: uuid(),
+    intent,
+    scenarioTitle: scenario.title || "Untitled transaction",
+    amount,
+    currency,
+    entries: [],
+    ifrs: IFRS_GUIDANCE_BY_INTENT[intent]
+      ? [...IFRS_GUIDANCE_BY_INTENT[intent]]
+      : [],
+    narrative: "",
+  };
+
+  const addEntry = (debitAcct, creditAcct, note, assetSide = "debit") => {
+    treatment.entries.push({
+      debit: debitAcct ? String(debitAcct.code || debitAcct).trim() : "",
+      credit: creditAcct ? String(creditAcct.code || creditAcct).trim() : "",
+      amount,
+      note,
+      assetSide,
+    });
+  };
+
+  if (!(amount > 0)) {
+    treatment.narrative = "Enter a positive amount to build the journal suggestion.";
+    return treatment;
+  }
+
+  switch (intent) {
+    case "recognize-income":
+      addEntry(assetAccount, incomeAcct, "Recognize revenue for the contribution.", "debit");
+      break;
+    case "defer-income":
+      addEntry(
+        assetAccount,
+        specialLiability || externalLiability,
+        "Hold the contribution as deferred revenue until obligations are met.",
+        "debit"
+      );
+      break;
+    case "external-liability":
+      addEntry(
+        assetAccount,
+        externalLiability || specialLiability,
+        "Treat the receipt as payable to the external organisation.",
+        "debit"
+      );
+      break;
+    case "record-expense":
+      addEntry(
+        expenseAcct,
+        assetAccount,
+        "Recognise the expense and reduce the paying account.",
+        "credit"
+      );
+      break;
+    case "transfer-to-fund":
+      addEntry(fundBank || assetAccount, operatingBank || cashOnHand, "Move cash into the fund bank account.", "debit");
+      break;
+    case "transfer-from-fund":
+      addEntry(
+        operatingBank || assetAccount,
+        fundBank || assetAccount,
+        "Return cash from the fund bank account to operations.",
+        "debit"
+      );
+      break;
+    case "transfer-cash-to-bank":
+      addEntry(operatingBank || assetAccount, cashOnHand || operatingBank, "Deposit teller cash into bank.", "debit");
+      break;
+    case "transfer-bank-to-cash":
+      addEntry(cashOnHand || assetAccount, operatingBank || cashOnHand, "Withdraw operating bank to replenish cash.", "debit");
+      break;
+    case "settle-special-liability":
+      addEntry(
+        specialLiability || externalLiability,
+        assetAccount,
+        "Settle the deferred special contribution liability.",
+        "credit"
+      );
+      break;
+    case "settle-external-liability":
+      addEntry(
+        externalLiability || specialLiability,
+        assetAccount,
+        "Remit the external collection to its beneficiary.",
+        "credit"
+      );
+      break;
+    default:
+      addEntry(assetAccount, incomeAcct || expenseAcct || specialLiability, "Generic entry generated from the scenario.", "debit");
+      break;
+  }
+
+  treatment.entries.forEach((line) => {
+    line.amount = amount;
+  });
+
+  return prRefreshTreatmentNarrative(treatment, scenario);
+}
+
+function prBuildAssistantSummary(treatment, scenario) {
+  if (!treatment) return "I still need details about the transaction before proposing a posting.";
+  const lines = (treatment.entries || []).map((entry) => {
+    const debitLabel = prAccountLabel(entry.debit);
+    const creditLabel = prAccountLabel(entry.credit);
+    const amountLabel = prFormatCurrency(
+      entry.amount ?? scenario.amount ?? treatment.amount ?? 0,
+      treatment.currency || scenario.currency || "MUR"
+    );
+    const reason = entry.note ? ` — ${entry.note}` : "";
+    return `${amountLabel}: Debit ${debitLabel} / Credit ${creditLabel}${reason}`;
+  });
+  const refs =
+    Array.isArray(treatment.ifrs) && treatment.ifrs.length
+      ? `Key IFRS guidance: ${treatment.ifrs
+          .map((ref) => `${ref.standard} (${ref.summary})`)
+          .join("; ")}`
+      : "";
+  let summary = treatment.narrative || "";
+  if (lines.length) summary += `\n${lines.map((line) => `• ${line}`).join("\n")}`;
+  if (refs) summary += `\n${refs}`;
+  return summary.trim();
+}
+
+function prApplyChatAdjustment(treatment, scenario, message) {
+  if (!treatment) return { changed: false, response: "No existing treatment to adjust.", treatment };
+  const text = (message || "").toLowerCase();
+  const updates = [];
+  const setAssetAccount = (code) => {
+    treatment.entries.forEach((entry) => {
+      if (entry.assetSide === "debit") entry.debit = code;
+      else if (entry.assetSide === "credit") entry.credit = code;
+    });
+  };
+
+  if (/cash on hand|teller|petty cash/.test(text)) {
+    const cash = prPickCashOnHandAccount();
+    if (cash) {
+      setAssetAccount(cash.code);
+      updates.push(`Asset side set to ${prAccountLabel(cash.code)}.`);
+    }
+  }
+  if (/operating bank|main bank|bank account|1000/.test(text)) {
+    const bank = prPickOperatingBankAccount();
+    if (bank) {
+      setAssetAccount(bank.code);
+      updates.push(`Asset side updated to ${prAccountLabel(bank.code)}.`);
+    }
+  }
+  if (/fund bank|earmark bank|fund account/.test(text)) {
+    const fundBank = prFindFundBankAccount(scenario.fund);
+    if (fundBank) {
+      setAssetAccount(fundBank.code);
+      updates.push(`Asset side updated to ${prAccountLabel(fundBank.code)}.`);
+    }
+  }
+
+  if (/defer|hold as liability/.test(text)) {
+    const liability = prFindLiabilityAccount("2300");
+    if (liability) {
+      treatment.intent = "defer-income";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["defer-income"]
+        ? [...IFRS_GUIDANCE_BY_INTENT["defer-income"]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        if (entry.assetSide === "debit") entry.credit = liability.code;
+      });
+      updates.push(`Credit switched to ${prAccountLabel(liability.code)} to defer revenue.`);
+    }
+  }
+  if (/external payable|external collection|remit later/.test(text)) {
+    const liability = prFindLiabilityAccount("2400");
+    if (liability) {
+      treatment.intent = "external-liability";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["external-liability"]
+        ? [...IFRS_GUIDANCE_BY_INTENT["external-liability"]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        if (entry.assetSide === "debit") entry.credit = liability.code;
+      });
+      updates.push(`Credit switched to ${prAccountLabel(liability.code)} to reflect the external payable.`);
+    }
+  }
+  if (/recognize income|treat as income|release income/.test(text)) {
+    const income = prFindFundIncomeAccount(scenario.fund);
+    if (income) {
+      treatment.intent = "recognize-income";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["recognize-income"]
+        ? [...IFRS_GUIDANCE_BY_INTENT["recognize-income"]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        if (entry.assetSide === "debit") entry.credit = income.code;
+      });
+      updates.push(`Credit switched to ${prAccountLabel(income.code)} to recognise income.`);
+    }
+  }
+  if (/expense account|charge to expense|record expense/.test(text)) {
+    const expense = prFindFundExpenseAccount(scenario.fund);
+    if (expense) {
+      treatment.intent = "record-expense";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["record-expense"]
+        ? [...IFRS_GUIDANCE_BY_INTENT["record-expense"]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        entry.debit = expense.code;
+        entry.assetSide = "credit";
+        entry.credit = entry.credit || prPickOperatingBankAccount()?.code || entry.credit;
+      });
+      updates.push(`Debit switched to ${prAccountLabel(expense.code)} to recognise an expense.`);
+    }
+  }
+  if (/settle liability|pay the liability/.test(text)) {
+    const isExternal = /external/.test(text);
+    const liability = prFindLiabilityAccount(isExternal ? "2400" : "2300");
+    const bank = prPickOperatingBankAccount() || prPickCashOnHandAccount();
+    if (liability) {
+      treatment.intent = isExternal ? "settle-external-liability" : "settle-special-liability";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT[treatment.intent]
+        ? [...IFRS_GUIDANCE_BY_INTENT[treatment.intent]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        entry.debit = liability.code;
+        entry.credit = bank ? bank.code : entry.credit;
+        entry.assetSide = "credit";
+      });
+      updates.push(
+        `Configured entry to settle ${prAccountLabel(liability.code)} using ${prAccountLabel(bank?.code)}.`
+      );
+    }
+  }
+  if (/transfer/.test(text) && !/liability/.test(text)) {
+    const bank = prPickOperatingBankAccount();
+    const cash = prPickCashOnHandAccount();
+    const fundBank = prFindFundBankAccount(scenario.fund);
+    if (/to fund|into fund|allocate/.test(text)) {
+      treatment.intent = "transfer-to-fund";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["transfer-to-fund"]
+        ? [...IFRS_GUIDANCE_BY_INTENT["transfer-to-fund"]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        entry.debit = fundBank ? fundBank.code : entry.debit;
+        entry.credit = bank ? bank.code : entry.credit;
+        entry.assetSide = "debit";
+      });
+      updates.push(`Configured as a transfer into the fund bank account ${prAccountLabel(fundBank?.code)}.`);
+    } else if (/from fund|back to operating/.test(text)) {
+      treatment.intent = "transfer-from-fund";
+      treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["transfer-from-fund"]
+        ? [...IFRS_GUIDANCE_BY_INTENT["transfer-from-fund"]]
+        : [];
+      treatment.entries.forEach((entry) => {
+        entry.debit = bank ? bank.code : entry.debit;
+        entry.credit = fundBank ? fundBank.code : entry.credit;
+        entry.assetSide = "debit";
+      });
+      updates.push("Configured as a transfer back to the operating bank.");
+    } else if (/cash/.test(text) && /bank/.test(text)) {
+      if (/deposit|to bank/.test(text)) {
+        treatment.intent = "transfer-cash-to-bank";
+        treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["transfer-cash-to-bank"]
+          ? [...IFRS_GUIDANCE_BY_INTENT["transfer-cash-to-bank"]]
+          : [];
+        treatment.entries.forEach((entry) => {
+          entry.debit = bank ? bank.code : entry.debit;
+          entry.credit = cash ? cash.code : entry.credit;
+          entry.assetSide = "debit";
+        });
+        updates.push("Configured as a cash deposit into the operating bank.");
+      } else if (/withdraw|from bank/.test(text)) {
+        treatment.intent = "transfer-bank-to-cash";
+        treatment.ifrs = IFRS_GUIDANCE_BY_INTENT["transfer-bank-to-cash"]
+          ? [...IFRS_GUIDANCE_BY_INTENT["transfer-bank-to-cash"]]
+          : [];
+        treatment.entries.forEach((entry) => {
+          entry.debit = cash ? cash.code : entry.debit;
+          entry.credit = bank ? bank.code : entry.credit;
+          entry.assetSide = "debit";
+        });
+        updates.push("Configured as a bank withdrawal into cash on hand.");
+      }
+    }
+  }
+
+  if (!updates.length) {
+    return {
+      changed: false,
+      response: "I did not detect a specific change. You can also edit the debit/credit accounts in the table.",
+      treatment,
+    };
+  }
+
+  treatment.entries.forEach((entry) => {
+    entry.amount = Math.abs(Number(scenario.amount) || Number(entry.amount) || 0);
+  });
+  prRefreshTreatmentNarrative(treatment, scenario);
+
+  return {
+    changed: true,
+    response: `${updates.join(" ")}\n${prBuildAssistantSummary(treatment, scenario)}`,
+    treatment,
+  };
+}
+
+function prRenderRuleList(container) {
+  if (!container) return;
+  const rules = loadPostingRules();
+  if (!Array.isArray(rules) || rules.length === 0) {
+    container.innerHTML =
+      '<div class="posting-empty">No automated posting rules yet. Create one to see it listed here.</div>';
+    return;
+  }
+  const sorted = rules
+    .slice()
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  container.innerHTML = "";
+  sorted.forEach((rule) => {
+    const wrap = document.createElement("div");
+    wrap.className = "rule-card";
+    const triggers = Array.isArray(rule.triggers) ? rule.triggers.join(", ") : rule.triggers || "—";
+    const entries = (rule.treatment?.entries || [])
+      .map(
+        (entry) =>
+          `<li><strong>Debit:</strong> ${prAccountLabel(entry.debit)}<br><strong>Credit:</strong> ${prAccountLabel(entry.credit)}<br><strong>Amount:</strong> ${prEscapeHtml(
+            prFormatCurrency(
+              entry.amount || rule.treatment?.amount || rule.scenario?.amount || 0,
+              rule.treatment?.currency || rule.scenario?.currency || "MUR"
+            )
+          )}</li>`
+      )
+      .join("");
+    wrap.innerHTML = `
+      <div class="rule-card-header">
+        <div>
+          <div class="rule-name">${prEscapeHtml(rule.name || "Untitled Rule")}</div>
+          <div class="rule-meta">Triggers: ${prEscapeHtml(triggers)}</div>
+        </div>
+        <div class="rule-meta">${rule.createdAt ? prEscapeHtml(new Date(rule.createdAt).toLocaleString()) : ""}</div>
+      </div>
+      <div class="rule-body">
+        ${rule.treatment?.narrative ? `<p>${prEscapeHtml(rule.treatment.narrative)}</p>` : ""}
+        ${rule.notes ? `<p class="rule-notes">${prEscapeHtml(rule.notes)}</p>` : ""}
+        <ul>${entries}</ul>
+      </div>
+    `;
+    container.appendChild(wrap);
+  });
+}
+
+
+
+function attachPostingRulesHandlers() {
+  const page = document.getElementById("postingRulesPage");
+  if (!page) return;
+
+  const rawSession = localStorage.getItem(SESSION_KEY);
+  if (!rawSession) {
+    window.location.href = "index.html";
+    return;
+  }
+  const session = JSON.parse(rawSession);
+  const who = document.getElementById("whoami");
+  if (who) who.textContent = `${session.user} (${session.role})`;
+  document.getElementById("logoutBtn")?.addEventListener("click", () => {
+    localStorage.removeItem(SESSION_KEY);
+    window.location.href = "index.html";
+  });
+
+  ensureSeedDataStrict();
+  ensurePostingRulesStore();
+
+  const state = {
+    scenario: prDefaultScenario(),
+    conversation: [],
+    treatment: null,
+  };
+
+  const inputs = {
+    title: document.getElementById("prTitle"),
+    amount: document.getElementById("prAmount"),
+    currency: document.getElementById("prCurrency"),
+    fund: document.getElementById("prFund"),
+    channel: document.getElementById("prChannel"),
+    counterparty: document.getElementById("prCounterparty"),
+    notes: document.getElementById("prNotes"),
+    intent: document.getElementById("prIntent"),
+  };
+
+  const conversationEl = document.getElementById("prConversation");
+  const messageInput = document.getElementById("prInput");
+  const sendBtn = document.getElementById("prSend");
+  const autoBtn = document.getElementById("prAutoAsk");
+  const narrativeEl = document.getElementById("prNarrative");
+  const treatmentBody = document.getElementById("prTreatmentBody");
+  const treatmentEmpty = document.getElementById("prTreatmentEmpty");
+  const addLineBtn = document.getElementById("prAddLine");
+  const ifrsList = document.getElementById("prIfrsList");
+  const ruleName = document.getElementById("prRuleName");
+  const ruleTriggers = document.getElementById("prRuleTriggers");
+  const ruleNotes = document.getElementById("prRuleNotes");
+  const createBtn = document.getElementById("prCreateRule");
+  const ruleList = document.getElementById("prRuleList");
+  const scenarioMeta = document.getElementById("prScenarioMeta");
+
+  const funds = loadJSON(FUNDS_KEY, []);
+  if (inputs.fund) {
+    inputs.fund.innerHTML = funds
+      .map((fund) => `<option value="${fund.code}">${fund.code} — ${fund.name}</option>`)
+      .join("");
+  }
+
+  function renderScenarioMeta() {
+    if (!scenarioMeta) return;
+    const fundObj = funds.find((f) => f.code === state.scenario.fund);
+    const fundLabel = fundObj ? `${fundObj.code} — ${fundObj.name}` : state.scenario.fund || "General Fund";
+    const amountLabel = prFormatCurrency(state.scenario.amount || 0, state.scenario.currency || "MUR");
+    scenarioMeta.innerHTML = `
+      <div><strong>Amount:</strong> ${prEscapeHtml(amountLabel)}</div>
+      <div><strong>Fund:</strong> ${prEscapeHtml(fundLabel)}</div>
+      <div><strong>Channel:</strong> ${prEscapeHtml(state.scenario.channel || "Operating bank")}</div>
+      <div><strong>Intent:</strong> ${prEscapeHtml(inputs.intent?.selectedOptions?.[0]?.text || state.scenario.intent)}</div>
+    `;
+  }
+
+  function syncScenarioToInputs() {
+    if (inputs.title) inputs.title.value = state.scenario.title || "";
+    if (inputs.amount) inputs.amount.value = state.scenario.amount ?? "";
+    if (inputs.currency) inputs.currency.value = state.scenario.currency || "MUR";
+    if (inputs.fund && state.scenario.fund) inputs.fund.value = state.scenario.fund;
+    if (inputs.channel) inputs.channel.value = state.scenario.channel || "";
+    if (inputs.counterparty) inputs.counterparty.value = state.scenario.counterparty || "";
+    if (inputs.notes) inputs.notes.value = state.scenario.notes || "";
+    if (inputs.intent) inputs.intent.value = state.scenario.intent || "recognize-income";
+    renderScenarioMeta();
+  }
+
+  function readScenarioFromInputs() {
+    state.scenario = {
+      title: (inputs.title?.value || "").trim(),
+      amount: Number(inputs.amount?.value || 0),
+      currency: (inputs.currency?.value || "MUR").trim() || "MUR",
+      fund: inputs.fund?.value || "",
+      channel: (inputs.channel?.value || "").trim(),
+      counterparty: (inputs.counterparty?.value || "").trim(),
+      notes: (inputs.notes?.value || "").trim(),
+      intent: inputs.intent?.value || "recognize-income",
+    };
+  }
+
+  const welcomeText =
+    'Hello! Describe the transaction or press "Ask for a posting" to see the suggested accounting treatment.';
+  state.conversation.push({ role: "assistant", text: welcomeText, ts: Date.now() });
+
+  function renderConversation() {
+    if (!conversationEl) return;
+    conversationEl.innerHTML = state.conversation
+      .map((msg) => {
+        const roleClass = msg.role === "assistant" ? "assistant" : "user";
+        const icon = msg.role === "assistant" ? "<i class='fa-solid fa-robot'></i>" : "<i class='fa-solid fa-user'></i>";
+        const text = prEscapeHtml(msg.text).replace(/\n/g, "<br>");
+        return `<div class="chat-line ${roleClass}"><div class="chat-avatar">${icon}</div><div class="chat-bubble">${text}</div></div>`;
+      })
+      .join("");
+    conversationEl.scrollTop = conversationEl.scrollHeight;
+  }
+
+  function updateCreateButton() {
+    if (!createBtn) return;
+    const hasName = (ruleName?.value || "").trim().length > 0;
+    const ready =
+      state.treatment &&
+      Array.isArray(state.treatment.entries) &&
+      state.treatment.entries.some(
+        (entry) => entry && entry.debit && entry.credit && Number(entry.amount) > 0
+      );
+    createBtn.disabled = !(hasName && ready);
+  }
+
+  function renderTreatment() {
+    if (!treatmentBody || !treatmentEmpty) return;
+    if (!state.treatment || !Array.isArray(state.treatment.entries) || state.treatment.entries.length === 0) {
+      treatmentBody.innerHTML = "";
+      treatmentEmpty.style.display = "block";
+      if (narrativeEl) narrativeEl.textContent = "Consult the assistant to generate a journal entry proposal.";
+      if (ifrsList)
+        ifrsList.innerHTML = "<li>IFRS guidance will appear once a treatment is generated.</li>";
+      updateCreateButton();
+      return;
+    }
+
+    treatmentEmpty.style.display = "none";
+    const accounts = prListAccounts();
+    const optionHtml = [
+      '<option value="">— Select —</option>',
+      ...accounts.map((acct) =>
+        `<option value="${acct.code}">${acct.code} — ${acct.name}${acct.fund ? ` (${acct.fund})` : ""}</option>`
+      ),
+    ].join("");
+
+    treatmentBody.innerHTML = "";
+    state.treatment.entries.forEach((entry, idx) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>
+          <select data-field="debit" data-index="${idx}">
+            ${optionHtml}
+          </select>
+        </td>
+        <td>
+          <select data-field="credit" data-index="${idx}">
+            ${optionHtml}
+          </select>
+        </td>
+        <td>
+          <input data-field="amount" data-index="${idx}" type="number" step="0.01" min="0" value="${Number(
+            entry.amount || state.scenario.amount || 0
+          )}" />
+        </td>
+        <td>
+          <input data-field="note" data-index="${idx}" type="text" value="${prEscapeHtml(entry.note || "")}" placeholder="Rationale" />
+        </td>
+        <td>
+          <button class="rowbtn danger" data-field="remove" data-index="${idx}" title="Remove line">✕</button>
+        </td>
+      `;
+      treatmentBody.appendChild(tr);
+    });
+
+    treatmentBody.querySelectorAll('select[data-field="debit"]').forEach((sel) => {
+      const idx = Number(sel.dataset.index);
+      sel.value = state.treatment.entries[idx]?.debit || "";
+    });
+    treatmentBody.querySelectorAll('select[data-field="credit"]').forEach((sel) => {
+      const idx = Number(sel.dataset.index);
+      sel.value = state.treatment.entries[idx]?.credit || "";
+    });
+
+    if (narrativeEl) narrativeEl.textContent = state.treatment.narrative || "";
+    if (ifrsList) {
+      ifrsList.innerHTML =
+        Array.isArray(state.treatment.ifrs) && state.treatment.ifrs.length
+          ? state.treatment.ifrs
+              .map((ref) => `<li><strong>${prEscapeHtml(ref.standard)}</strong> — ${prEscapeHtml(ref.summary)}</li>`)
+              .join("")
+          : "<li>IFRS guidance will appear once a treatment is generated.</li>";
+    }
+
+    updateCreateButton();
+  }
+
+  function renderAll() {
+    renderScenarioMeta();
+    renderConversation();
+    renderTreatment();
+  }
+
+  function resetConversationWithNote(note) {
+    state.conversation = [
+      { role: "assistant", text: welcomeText, ts: Date.now() },
+    ];
+    if (note) state.conversation.push({ role: "assistant", text: note, ts: Date.now() });
+  }
+
+  function handleScenarioChange() {
+    const prevIntent = state.scenario.intent;
+    const prevFund = state.scenario.fund;
+    const prevAmount = state.scenario.amount;
+    readScenarioFromInputs();
+    renderScenarioMeta();
+    if (prevIntent !== state.scenario.intent || prevFund !== state.scenario.fund) {
+      state.treatment = null;
+      resetConversationWithNote("Scenario updated. Ask for a posting to refresh the treatment.");
+    } else if (prevAmount !== state.scenario.amount && state.treatment) {
+      const amt = Math.abs(Number(state.scenario.amount) || 0);
+      state.treatment.amount = amt;
+      state.treatment.entries.forEach((entry) => (entry.amount = amt));
+      prRefreshTreatmentNarrative(state.treatment, state.scenario);
+    }
+    renderAll();
+  }
+
+  function handleSend(rawMessage) {
+    const clean = (rawMessage || "").trim();
+    if (!clean) return;
+
+    readScenarioFromInputs();
+    renderScenarioMeta();
+
+    if (/^reset( conversation)?$/i.test(clean)) {
+      state.treatment = null;
+      resetConversationWithNote("Conversation cleared. Ask for a new posting when ready.");
+      renderAll();
+      if (messageInput) messageInput.value = "";
+      return;
+    }
+
+    state.conversation.push({ role: "user", text: clean, ts: Date.now() });
+    const needsFresh = !state.treatment || /new suggestion|fresh start/.test(clean.toLowerCase());
+
+    if (needsFresh) {
+      state.treatment = prTreatmentFromIntent(state.scenario);
+      const summary = prBuildAssistantSummary(state.treatment, state.scenario);
+      state.conversation.push({ role: "assistant", text: summary, ts: Date.now() });
+    } else {
+      const adjustment = prApplyChatAdjustment(state.treatment, state.scenario, clean);
+      state.treatment = adjustment.treatment || state.treatment;
+      const reply = adjustment.response || prBuildAssistantSummary(state.treatment, state.scenario);
+      state.conversation.push({ role: "assistant", text: reply, ts: Date.now() });
+    }
+
+    renderAll();
+    if (messageInput) messageInput.value = "";
+  }
+
+  const scenarioInputs = [
+    inputs.title,
+    inputs.amount,
+    inputs.currency,
+    inputs.fund,
+    inputs.channel,
+    inputs.counterparty,
+    inputs.notes,
+    inputs.intent,
+  ].filter(Boolean);
+  scenarioInputs.forEach((element) => {
+    const evt = element.tagName === "SELECT" ? "change" : "input";
+    element.addEventListener(evt, handleScenarioChange);
+  });
+
+  if (sendBtn) sendBtn.addEventListener("click", () => handleSend(messageInput?.value));
+  if (autoBtn)
+    autoBtn.addEventListener("click", () => handleSend("Please propose the journal entry for this transaction."));
+  if (messageInput)
+    messageInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleSend(messageInput.value);
+      }
+    });
+
+  if (addLineBtn)
+    addLineBtn.addEventListener("click", () => {
+      if (!state.treatment) state.treatment = prTreatmentFromIntent(state.scenario);
+      state.treatment.entries.push({
+        debit: "",
+        credit: "",
+        amount: Math.abs(Number(state.scenario.amount) || 0),
+        note: "Custom line",
+        assetSide: "debit",
+      });
+      prRefreshTreatmentNarrative(state.treatment, state.scenario);
+      renderTreatment();
+    });
+
+  if (treatmentBody) {
+    treatmentBody.addEventListener("change", (e) => {
+      const field = e.target.dataset.field;
+      const idx = Number(e.target.dataset.index);
+      if (Number.isNaN(idx) || !state.treatment || !field) return;
+      if (field === "debit" || field === "credit") {
+        state.treatment.entries[idx][field] = e.target.value;
+        prRefreshTreatmentNarrative(state.treatment, state.scenario);
+        renderTreatment();
+      }
+    });
+    treatmentBody.addEventListener("input", (e) => {
+      const field = e.target.dataset.field;
+      const idx = Number(e.target.dataset.index);
+      if (Number.isNaN(idx) || !state.treatment || !field) return;
+      if (field === "amount") {
+        state.treatment.entries[idx].amount = Number(e.target.value || 0);
+        state.treatment.amount = Number(e.target.value || 0);
+        prRefreshTreatmentNarrative(state.treatment, state.scenario);
+      } else if (field === "note") {
+        state.treatment.entries[idx].note = e.target.value;
+      }
+      updateCreateButton();
+    });
+    treatmentBody.addEventListener("click", (e) => {
+      const btn = e.target.closest('button[data-field="remove"]');
+      if (!btn || !state.treatment) return;
+      const idx = Number(btn.dataset.index);
+      if (Number.isNaN(idx)) return;
+      state.treatment.entries.splice(idx, 1);
+      if (state.treatment.entries.length === 0) state.treatment = null;
+      renderTreatment();
+    });
+  }
+
+  [ruleName, ruleTriggers, ruleNotes].forEach((input) => {
+    input?.addEventListener("input", updateCreateButton);
+  });
+
+  if (createBtn)
+    createBtn.addEventListener("click", () => {
+      if (createBtn.disabled) return;
+      if (!state.treatment) {
+        alert("Generate a treatment before creating a rule.");
+        return;
+      }
+      const name = (ruleName?.value || "").trim();
+      if (!name) {
+        alert("Enter a rule name.");
+        return;
+      }
+      const triggers = (ruleTriggers?.value || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const rule = {
+        id: uuid(),
+        name,
+        triggers,
+        notes: (ruleNotes?.value || "").trim(),
+        scenario: { ...state.scenario },
+        treatment: {
+          ...state.treatment,
+          entries: state.treatment.entries.map((entry) => ({ ...entry })),
+        },
+        conversation: state.conversation.slice(),
+        createdAt: new Date().toISOString(),
+        createdBy: session.user,
+      };
+      const rules = loadPostingRules();
+      rules.push(rule);
+      savePostingRules(rules);
+      prRenderRuleList(ruleList);
+      alert("Automated posting rule created. Matching transactions can now reuse this treatment.");
+      updateCreateButton();
+    });
+
+  syncScenarioToInputs();
+  prRenderRuleList(ruleList);
+  renderAll();
+  updateCreateButton();
+}
+
+document.addEventListener("DOMContentLoaded", attachPostingRulesHandlers);
+
+
+/* =================== (11) USERS (Admin: create user + reset link) =================== */
 function attachUsersHandlers() {
   const sec = document.getElementById("usersSection");
   if (!sec) return;
