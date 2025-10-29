@@ -4118,7 +4118,7 @@ function attachPostingRulesHandlers() {
   const builderState = {
     scenario: {
       title: "",
-      amount: 0,
+      amount: null,
       currency: "MUR",
       type: "payment",
       fund: generalFund?.code || "",
@@ -4160,10 +4160,16 @@ function attachPostingRulesHandlers() {
   let pendingAccountAssignment = null;
 
   function createEmptyLine() {
+    const defaultAmount = (() => {
+      const amt = builderState.scenario.amount;
+      if (amt === null || amt === undefined || amt === "") return null;
+      const parsed = typeof amt === "number" ? amt : Number(amt);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    })();
     return {
       debit: "",
       credit: "",
-      amount: builderState.scenario.amount || 0,
+      amount: defaultAmount,
       memo: "",
       cashImpact: "",
     };
@@ -4214,10 +4220,14 @@ function attachPostingRulesHandlers() {
     const rows = builderState.lines
       .map((line, idx) => {
         const disableRemove = builderState.lines.length === 1 ? ' disabled' : '';
-        const amountValue = Number.isFinite(Number(line.amount)) && Number(line.amount) !== 0
-          ? Number(line.amount)
-          : '';
-        return `<div class="movement-row" data-index="${idx}" role="group">
+        const rawAmount = line.amount;
+        const parsedAmount = typeof rawAmount === 'number' ? rawAmount : Number(rawAmount);
+        const amountValue = (rawAmount === null || rawAmount === undefined || rawAmount === '')
+          ? ''
+          : (Number.isFinite(parsedAmount) ? parsedAmount : '');
+        const rowLabelId = `movement-row-${idx}`;
+        return `<div class="movement-row" data-index="${idx}" role="group" aria-labelledby="${rowLabelId}">
+          <div class="movement-seq" id="${rowLabelId}">Movement ${idx + 1}</div>
           <div class="movement-field">
             <label>Money goes to (Debit)</label>
             <select data-field="debit" data-index="${idx}">${accountOptions}</select>
@@ -4277,11 +4287,16 @@ function attachPostingRulesHandlers() {
     if (!container) return;
     const scenario = builderState.scenario;
     const title = scenario.title ? escapeHtml(scenario.title) : "Untitled scenario";
-    const amountNumber = Number(scenario.amount);
+    const rawAmount = scenario.amount;
+    const parsedAmount = typeof rawAmount === 'number' ? rawAmount : Number(rawAmount);
+    const hasAmount = rawAmount !== null && rawAmount !== undefined && rawAmount !== '' && Number.isFinite(parsedAmount) && parsedAmount > 0;
     const currency = (scenario.currency || "MUR").toUpperCase();
-    const amountLabel = Number.isFinite(amountNumber) && amountNumber > 0
-      ? escapeHtml(formatRuleCurrency(amountNumber, scenario.currency || "MUR"))
-      : "Set a reference amount";
+    const amountLabel = hasAmount
+      ? escapeHtml(formatRuleCurrency(parsedAmount, scenario.currency || "MUR"))
+      : "Varies per transaction";
+    const amountHint = hasAmount
+      ? `Currency: ${currency}`
+      : "Reference amount is optional";
     const funds = loadJSON(FUNDS_KEY, []);
     const fundRecord = funds.find((f) => f.code === scenario.fund);
     const fundLabel = fundRecord
@@ -4310,7 +4325,7 @@ function attachPostingRulesHandlers() {
         <div class="highlight-item">
           <span class="highlight-label">Reference amount</span>
           <strong>${amountLabel}</strong>
-          <span class="highlight-hint">Currency: ${escapeHtml(currency)}</span>
+          <span class="highlight-hint">${escapeHtml(amountHint)}</span>
         </div>
         <div class="highlight-item">
           <span class="highlight-label">Primary fund</span>
@@ -4339,8 +4354,15 @@ function attachPostingRulesHandlers() {
     const statusText = incomplete === 0
       ? "All movements look balanced."
       : `${incomplete} movement${incomplete === 1 ? "" : "s"} still need details.`;
-    const totalAmount = lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
+    const totalAmount = lines.reduce((sum, line) => {
+      const parsed = Number(line.amount);
+      return Number.isFinite(parsed) ? sum + parsed : sum;
+    }, 0);
     const currency = builderState.scenario.currency || "MUR";
+    const hasAmounts = lines.some((line) => Number(line.amount) > 0);
+    const totalLabel = hasAmounts
+      ? formatRuleCurrency(totalAmount, currency)
+      : "Amounts not set";
     const accounts = new Set();
     lines.forEach((line) => {
       if (line.debit) accounts.add(line.debit);
@@ -4355,7 +4377,7 @@ function attachPostingRulesHandlers() {
       <div class="summary-grid">
         <div class="summary-item">
           <span class="summary-label">Total amount mapped</span>
-          <strong>${escapeHtml(formatRuleCurrency(totalAmount, currency))}</strong>
+          <strong>${escapeHtml(totalLabel)}</strong>
         </div>
         <div class="summary-item">
           <span class="summary-label">Accounts touched</span>
@@ -4418,7 +4440,7 @@ function attachPostingRulesHandlers() {
 
   function syncScenarioToInputs() {
     if (elements.title) elements.title.value = builderState.scenario.title;
-    if (elements.amount) elements.amount.value = builderState.scenario.amount || "";
+    if (elements.amount) elements.amount.value = builderState.scenario.amount ?? "";
     if (elements.currency) elements.currency.value = builderState.scenario.currency;
     if (elements.type) elements.type.value = builderState.scenario.type;
     refreshFundSelects(builderState.scenario.fund);
@@ -4428,13 +4450,20 @@ function attachPostingRulesHandlers() {
 
   function handleScenarioChange(field, value) {
     if (field === 'amount') {
-      const prev = builderState.scenario.amount || 0;
-      const next = Number(value) || 0;
-      builderState.scenario.amount = next;
-      if (prev === 0) {
-        builderState.lines.forEach((line) => {
-          if (!Number(line.amount)) line.amount = next;
-        });
+      const raw = typeof value === 'string' ? value.trim() : value;
+      const prev = builderState.scenario.amount;
+      if (raw === '') {
+        builderState.scenario.amount = null;
+      } else {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) {
+          builderState.scenario.amount = parsed;
+          if ((prev === null || prev === undefined || prev === 0) && parsed > 0) {
+            builderState.lines.forEach((line) => {
+              if (!Number(line.amount)) line.amount = parsed;
+            });
+          }
+        }
       }
     } else if (field === 'currency') {
       builderState.scenario.currency = (value || 'MUR').trim() || 'MUR';
@@ -4482,6 +4511,8 @@ function attachPostingRulesHandlers() {
   elements.addLine?.addEventListener('click', () => {
     builderState.lines.push(createEmptyLine());
     renderLineRows();
+    const lastRowDebit = elements.lineContainer?.querySelector('.movement-row:last-of-type select[data-field="debit"]');
+    lastRowDebit?.focus();
   });
 
   elements.lineContainer?.addEventListener('change', (e) => {
@@ -4512,7 +4543,13 @@ function attachPostingRulesHandlers() {
     if (Number.isNaN(idx) || !field) return;
     if (!builderState.lines[idx]) return;
     if (field === 'amount') {
-      builderState.lines[idx].amount = Number(e.target.value) || 0;
+      const raw = e.target.value;
+      if (raw === '') {
+        builderState.lines[idx].amount = null;
+      } else {
+        const parsed = Number(raw);
+        builderState.lines[idx].amount = Number.isFinite(parsed) ? parsed : null;
+      }
     } else if (field === 'memo') {
       builderState.lines[idx].memo = e.target.value;
     }
@@ -4619,13 +4656,15 @@ function attachPostingRulesHandlers() {
       .map((x) => x.trim())
       .filter(Boolean);
     const notes = (elements.ruleNotes?.value || '').trim();
-    const lines = builderState.lines.map((line) => ({
-      debit: line.debit,
-      credit: line.credit,
-      amount: Number(line.amount) || 0,
-      memo: line.memo || '',
-      cashImpact: line.cashImpact || '',
-    }));
+    const lines = builderState.lines
+      .filter((line) => line.debit && line.credit && Number(line.amount) > 0)
+      .map((line) => ({
+        debit: line.debit,
+        credit: line.credit,
+        amount: Number(line.amount) || 0,
+        memo: line.memo || '',
+        cashImpact: line.cashImpact || '',
+      }));
     const rule = {
       id: uuid(),
       name,
@@ -4634,7 +4673,12 @@ function attachPostingRulesHandlers() {
       scenario: { ...builderState.scenario },
       lines,
       treatment: {
-        amount: builderState.scenario.amount || 0,
+        amount: (() => {
+          const amt = builderState.scenario.amount;
+          if (amt === null || amt === undefined || amt === '') return null;
+          const parsed = typeof amt === 'number' ? amt : Number(amt);
+          return Number.isFinite(parsed) ? parsed : null;
+        })(),
         currency: builderState.scenario.currency || 'MUR',
         narrative: builderState.scenario.notes || builderState.scenario.title || '',
         entries: lines.map((line) => ({
