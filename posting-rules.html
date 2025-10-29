@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LSA Treasury | Posting Rules Studio</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+</head>
+<body id="postingRulesPage">
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Posting Rules Studio</div>
+    <div style="margin-left:auto; font-size:14px; display:flex; align-items:center; gap:10px;">
+      <span style="padding:4px 8px; border:1px solid #e5e7eb; border-radius:6px; background:#f9fafb; font-weight:600;">
+        Currency: MUR (Rs)
+      </span>
+      Signed in as <strong id="whoami"></strong>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink" href="dashboard.html"><i class="fa-solid fa-gauge"></i> Dashboard</a>
+        <a class="navlink" href="believers.html"><i class="fa-solid fa-users"></i> Believers</a>
+        <a class="navlink" href="funds.html"><i class="fa-solid fa-vault"></i> Funds</a>
+        <a class="navlink" href="transactions.html"><i class="fa-solid fa-file-invoice"></i> Transactions</a>
+        <a class="navlink" href="reports.html"><i class="fa-solid fa-chart-line"></i> Reports</a>
+        <a class="navlink" href="settings.html"><i class="fa-solid fa-gear"></i> Settings</a>
+        <a class="navlink" href="adjustments.html"><i class="fa-solid fa-sliders"></i> Adjustments &amp; OB</a>
+        <a class="navlink active" href="posting-rules.html"><i class="fa-solid fa-wand-magic-sparkles"></i> Posting Rules Studio</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Posting Rules Studio</h1>
+          <p class="page-subtitle">
+            Collaborate with the assistant to design IFRS-aligned posting rules that can automate your journals.
+          </p>
+        </div>
+        <div class="header-meta">
+          <span class="chip">Design once, reuse everywhere</span>
+        </div>
+      </div>
+
+      <div class="posting-grid">
+        <div class="posting-column">
+          <section class="card posting-card">
+            <h2>Transaction Intake</h2>
+            <p>Describe the transaction you would like to automate. The assistant will reference these fields while preparing postings.</p>
+            <div class="grid2">
+              <div class="form-row span-all">
+                <label for="prTitle">Title / Scenario</label>
+                <input id="prTitle" type="text" placeholder="e.g. Feast contribution received via bank" />
+              </div>
+              <div class="form-row">
+                <label for="prAmount">Amount</label>
+                <input id="prAmount" type="number" step="0.01" min="0" placeholder="0.00" />
+              </div>
+              <div class="form-row">
+                <label for="prCurrency">Currency</label>
+                <input id="prCurrency" type="text" value="MUR" />
+              </div>
+              <div class="form-row">
+                <label for="prFund">Fund</label>
+                <select id="prFund"></select>
+              </div>
+              <div class="form-row">
+                <label for="prChannel">Channel</label>
+                <input id="prChannel" type="text" placeholder="e.g. Operating bank, Cash on hand" />
+              </div>
+              <div class="form-row">
+                <label for="prCounterparty">Counterparty</label>
+                <input id="prCounterparty" type="text" placeholder="Optional reference" />
+              </div>
+              <div class="form-row span-all">
+                <label for="prIntent">Posting Intent</label>
+                <select id="prIntent">
+                  <option value="recognize-income">Recognize Contribution / Income</option>
+                  <option value="defer-income">Defer Contribution as Liability</option>
+                  <option value="external-liability">Record External Collection Payable</option>
+                  <option value="record-expense">Record Expense / Payment</option>
+                  <option value="transfer-to-fund">Transfer Operating Bank → Fund Bank</option>
+                  <option value="transfer-from-fund">Transfer Fund Bank → Operating Bank</option>
+                  <option value="transfer-cash-to-bank">Deposit Cash on Hand → Bank</option>
+                  <option value="transfer-bank-to-cash">Withdraw Bank → Cash on Hand</option>
+                  <option value="settle-special-liability">Settle Deferred Contribution Liability</option>
+                  <option value="settle-external-liability">Settle External Collection Liability</option>
+                </select>
+              </div>
+              <div class="form-row span-all">
+                <label for="prNotes">Narrative / Notes</label>
+                <textarea id="prNotes" rows="2" placeholder="Details that influence accounting treatment"></textarea>
+              </div>
+            </div>
+            <div class="scenario-meta" id="prScenarioMeta"></div>
+          </section>
+
+          <section class="card posting-card">
+            <div class="posting-card-header">
+              <h2>Guided Chat Workspace</h2>
+              <button class="btn-secondary" type="button" id="prAutoAsk"><i class="fa-solid fa-wand-magic-sparkles"></i> Ask for a posting</button>
+            </div>
+            <p class="posting-hint">Ask questions such as “How should we post this?” or request changes like “Use cash on hand” or “Defer as liability”.</p>
+            <div class="chat-window" id="prConversation"></div>
+            <div class="chat-input">
+              <textarea id="prInput" rows="3" placeholder="Describe the transaction or request adjustments..."></textarea>
+              <div class="chat-actions">
+                <span class="micro">Tip: Ctrl/⌘ + Enter to send. Type “reset” to clear the conversation.</span>
+                <button class="btn-primary" type="button" id="prSend">Send</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="posting-column">
+          <section class="card posting-card">
+            <div class="posting-card-header">
+              <h2>Proposed Accounting Treatment</h2>
+              <button class="btn-secondary" type="button" id="prAddLine"><i class="fa-solid fa-plus"></i> Add line</button>
+            </div>
+            <p class="posting-narrative" id="prNarrative">Consult the assistant to generate a journal entry proposal.</p>
+            <div class="treatment-wrapper">
+              <table class="treatment-table">
+                <thead>
+                  <tr>
+                    <th>Debit Account</th>
+                    <th>Credit Account</th>
+                    <th>Amount</th>
+                    <th>Rationale</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="prTreatmentBody"></tbody>
+              </table>
+              <div class="posting-empty" id="prTreatmentEmpty">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <p>Once the assistant suggests entries, they will appear here for fine-tuning.</p>
+              </div>
+            </div>
+            <div class="ifrs-block">
+              <h3>IFRS Considerations</h3>
+              <ul id="prIfrsList">
+                <li>IFRS guidance will appear once a treatment is generated.</li>
+              </ul>
+            </div>
+          </section>
+
+          <section class="card posting-card">
+            <h2>Automation &amp; Rule Creation</h2>
+            <p>When satisfied with the entry, name the rule and define trigger phrases. The studio will persist your configuration.</p>
+            <div class="grid2">
+              <div class="form-row">
+                <label for="prRuleName">Rule name</label>
+                <input id="prRuleName" type="text" placeholder="e.g. Feast contribution automation" />
+              </div>
+              <div class="form-row">
+                <label for="prRuleTriggers">Trigger keywords</label>
+                <input id="prRuleTriggers" type="text" placeholder="e.g. feast, contribution, general" />
+                <span class="field-hint">Comma separated phrases scanned in transaction descriptions.</span>
+              </div>
+              <div class="form-row span-all">
+                <label for="prRuleNotes">Implementation notes</label>
+                <textarea id="prRuleNotes" rows="2" placeholder="Optional approvals, reviewer guidance, or IFRS references."></textarea>
+              </div>
+            </div>
+            <button class="btn-primary" type="button" id="prCreateRule" disabled><i class="fa-solid fa-circle-check"></i> Create posting rule</button>
+            <p class="micro">Rules are stored locally for prototyping. Export or document them for production once governance review is complete.</p>
+          </section>
+        </div>
+      </div>
+
+      <section class="card posting-card">
+        <div class="posting-card-header">
+          <h2>Existing Automated Posting Rules</h2>
+          <span class="micro">Last saved rules appear here for quick reference.</span>
+        </div>
+        <div id="prRuleList" class="rule-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
