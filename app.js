@@ -520,9 +520,9 @@ const ensureCashflowIntegrity = () => {
       if (!clean) return;
       const key = cashflowSignature(clean);
       const candidates = expectedBySignature.get(key) || [];
+      let match = null;
       if (candidates.length) {
         const normCleanTag = normalizeTag(clean._tag);
-        let match = null;
         if (normCleanTag) {
           match = candidates.find(
             (candidate) =>
@@ -547,6 +547,11 @@ const ensureCashflowIntegrity = () => {
           }
           match.__used = true;
         }
+      }
+      if (!match) {
+        // Drop cashflow rows that no longer map back to any journal entry.
+        mutated = true;
+        return;
       }
       existing.push(clean);
       existingCounts.set(key, (existingCounts.get(key) || 0) + 1);

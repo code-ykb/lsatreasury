@@ -123,4 +123,31 @@ const { bootstrapApp, getJSON } = require('./helpers');
   assert.ok(refreshCalls > 0, 'dashboard refresh hook should fire when fallback removal saves cashflow');
 })();
 
+(function testEnsureIntegrityDropsOrphanCashflowRows() {
+  const sandbox = bootstrapApp();
+  sandbox.ensureSeedDataStrict();
+
+  const orphanRow = {
+    date: '2024-03-03',
+    type: 'receipt',
+    bucket: 'Direct Contribution — General Fund',
+    amount: 9000,
+    fund: 'GEN',
+    note: 'Direct Contribution — General Fund',
+    _tag: 'TXN-orphan',
+    _src: 'CONTRIB',
+  };
+
+  sandbox.localStorage.setItem('lsa_cashflow', JSON.stringify([orphanRow]));
+
+  const txnApi = sandbox.window.__lsaTxn;
+  assert.ok(txnApi, 'transaction helpers should be available for integrity checks');
+
+  txnApi.ensureCashflowIntegrity();
+
+  const cf = getJSON(sandbox.localStorage, 'lsa_cashflow');
+  assert.ok(Array.isArray(cf), 'cashflow rows should persist as an array');
+  assert.strictEqual(cf.length, 0, 'ensureCashflowIntegrity should purge cashflow rows with no journal backing');
+})();
+
 console.log('All delete tests passed');
