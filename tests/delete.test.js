@@ -51,4 +51,30 @@ const { bootstrapApp, getJSON } = require('./helpers');
   assert.strictEqual(txns.length, 0, 'transaction log entry should be removed for the tag');
 })();
 
+(function testEnsureCashflowIntegrityPrunesOrphans() {
+  const sandbox = bootstrapApp();
+  sandbox.ensureSeedDataStrict();
+
+  const orphan = {
+    date: '2024-02-15',
+    type: 'receipt',
+    bucket: 'Legacy Row',
+    amount: 2500,
+    fund: 'GEN',
+    _src: 'LEGACY',
+  };
+
+  sandbox.localStorage.setItem('lsa_cashflow', JSON.stringify([orphan]));
+  sandbox.localStorage.setItem('lsa_journal', JSON.stringify([]));
+
+  const txnApi = sandbox.window.__lsaTxn;
+  const result = txnApi.ensureCashflowIntegrity();
+
+  assert.ok(Array.isArray(result), 'ensureCashflowIntegrity should return an array');
+  assert.strictEqual(result.length, 0, 'unexpected cashflow rows should be pruned');
+
+  const stored = getJSON(sandbox.localStorage, 'lsa_cashflow');
+  assert.strictEqual(stored.length, 0, 'cashflow store should no longer contain the orphan row');
+})();
+
 console.log('All delete tests passed');

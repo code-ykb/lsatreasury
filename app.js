@@ -368,34 +368,38 @@ const ensureCashflowIntegrity = () => {
       if (!clean) return;
       const key = cashflowSignature(clean);
       const candidates = expectedBySignature.get(key) || [];
-      if (candidates.length) {
-        const normCleanTag = normalizeTag(clean._tag);
-        let match = null;
-        if (normCleanTag) {
-          match = candidates.find(
-            (candidate) =>
-              !candidate.__used && normalizeTag(candidate._tag) === normCleanTag
-          );
-        }
-        if (!match) {
-          match = candidates.find((candidate) => !candidate.__used && candidate._tag);
-        }
-        if (!match) {
-          match = candidates.find((candidate) => !candidate.__used);
-        }
-        if (match) {
-          const normalizedMatchTag = normalizeTag(match._tag);
-          if (normalizedMatchTag && normalizedMatchTag !== normCleanTag) {
-            clean._tag = normalizedMatchTag;
-            mutated = true;
-          }
-          if (match._src && match._src !== clean._src) {
-            clean._src = match._src;
-            mutated = true;
-          }
-          match.__used = true;
-        }
+      if (!candidates.length) {
+        mutated = true;
+        return;
       }
+      const normCleanTag = normalizeTag(clean._tag);
+      let match = null;
+      if (normCleanTag) {
+        match = candidates.find(
+          (candidate) =>
+            !candidate.__used && normalizeTag(candidate._tag) === normCleanTag
+        );
+      }
+      if (!match) {
+        match = candidates.find((candidate) => !candidate.__used && candidate._tag);
+      }
+      if (!match) {
+        match = candidates.find((candidate) => !candidate.__used);
+      }
+      if (!match) {
+        mutated = true;
+        return;
+      }
+      const normalizedMatchTag = normalizeTag(match._tag);
+      if (normalizedMatchTag && normalizedMatchTag !== normCleanTag) {
+        clean._tag = normalizedMatchTag;
+        mutated = true;
+      }
+      if (match._src && match._src !== clean._src) {
+        clean._src = match._src;
+        mutated = true;
+      }
+      match.__used = true;
       existing.push(clean);
       existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
     });
