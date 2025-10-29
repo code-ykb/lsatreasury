@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "description": "LSA Treasury static app",
   "scripts": {
-    "test": "node tests/seed.test.js"
+    "test": "node tests/seed.test.js && node tests/delete.test.js"
   }
 }

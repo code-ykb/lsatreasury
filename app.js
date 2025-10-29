@@ -133,41 +133,68 @@ const pruneTaggedRows = (rows, tag, signatureFn) => {
 const removeJournalByTag = (tag) => {
   const current = loadJSON(JOURNAL_KEY);
   const filtered = pruneTaggedRows(current, tag, journalSignature);
-  if (filtered.length !== current.length) saveJSON(JOURNAL_KEY, filtered);
+  if (filtered.length !== current.length) {
+    saveJSON(JOURNAL_KEY, filtered);
+    return true;
+  }
+  return false;
 };
 const removeCashflowByTag = (tag) => {
   const current = loadCashflow();
   const filtered = pruneTaggedRows(current, tag, cashflowSignatureWithNote);
-  if (filtered.length !== current.length) saveCashflow(filtered);
+  if (filtered.length !== current.length) {
+    saveCashflow(filtered);
+    return true;
+  }
+  return false;
 };
 const removeLedgerByTag = (tag) => {
-  const current = clLoad();
+  const current = loadJSON(CONTRIB_LEDGER_KEY);
   const filtered = pruneTaggedRows(current, tag, ledgerSignature);
-  if (filtered.length !== current.length) clSave(filtered);
+  if (filtered.length !== current.length) {
+    saveJSON(CONTRIB_LEDGER_KEY, filtered);
+    return true;
+  }
+  return false;
 };
 const removeOpeningBalanceByTag = (tag) => {
   const key = "lsa_ob";
   const current = loadJSON(key, []);
   const filtered = pruneTaggedRows(current, tag, journalSignature);
-  if (filtered.length !== current.length) saveJSON(key, filtered);
+  if (filtered.length !== current.length) {
+    saveJSON(key, filtered);
+    return true;
+  }
+  return false;
 };
 const removeAdjustmentByTag = (tag) => {
   const key = "lsa_adj";
   const current = loadJSON(key, []);
   const filtered = pruneTaggedRows(current, tag, journalSignature);
-  if (filtered.length !== current.length) saveJSON(key, filtered);
+  if (filtered.length !== current.length) {
+    saveJSON(key, filtered);
+    return true;
+  }
+  return false;
 };
 const purgeTransactionArtifacts = (tag) => {
   const normalized = normalizeTag(tag);
-  if (!normalized) return;
-  const txns = readTransactions();
-  const keptTxns = txns.filter((row) => !matchesTag(row, normalized));
-  if (keptTxns.length !== txns.length) saveTransactions(keptTxns);
-  removeJournalByTag(normalized);
-  removeCashflowByTag(normalized);
-  removeLedgerByTag(normalized);
-  removeOpeningBalanceByTag(normalized);
-  removeAdjustmentByTag(normalized);
+  if (!normalized) return { removed: false };
+  let removed = false;
+  const txns = loadTransactions();
+  const rows = Array.isArray(txns) ? txns : [];
+  const keptTxns = rows.filter((row) => !matchesTag(row, normalized));
+  if (keptTxns.length !== rows.length) {
+    saveTransactions(keptTxns);
+    removed = true;
+  }
+  if (removeJournalByTag(normalized)) removed = true;
+  if (removeCashflowByTag(normalized)) removed = true;
+  if (removeLedgerByTag(normalized)) removed = true;
+  if (removeOpeningBalanceByTag(normalized)) removed = true;
+  if (removeAdjustmentByTag(normalized)) removed = true;
+  if (removed) ensureCashflowIntegrity();
+  return { removed };
 };
 
 const sanitizeCashflowRow = (row) => {
@@ -222,24 +249,10 @@ const cashflowRowsEqual = (a, b) => {
   return srcA === srcB;
 };
 
+
 const ensureCashflowIntegrity = () => {
   ensureSeedDataStrict();
 
-  const existingRaw = loadCashflow();
-  const existing = [];
-  const existingCounts = new Map();
-  if (Array.isArray(existingRaw)) {
-    existingRaw.forEach((row) => {
-      const clean = sanitizeCashflowRow(row);
-      if (!clean) return;
-      existing.push(clean);
-      const key = cashflowSignature(clean);
-      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
-    });
-  }
-
-  const expectedRows = [];
-  const expectedCounts = new Map();
   const journalRows = loadJSON(JOURNAL_KEY, []);
   const fundsByCode = new Map(
     loadJSON(FUNDS_KEY, []).map((f) => [String(f.code || "").trim(), f])
@@ -267,6 +280,18 @@ const ensureCashflowIntegrity = () => {
     expenseNotes.set(key, note);
   });
 
+  const expectedBySignature = new Map();
+  const registerExpected = (row, tag, source) => {
+    const candidate = sanitizeCashflowRow(row);
+    if (!candidate) return;
+    const normalizedTag = normalizeTag(tag);
+    if (normalizedTag && !candidate._tag) candidate._tag = normalizedTag;
+    if (source && !candidate._src) candidate._src = source;
+    const key = cashflowSignature(candidate);
+    if (!expectedBySignature.has(key)) expectedBySignature.set(key, []);
+    expectedBySignature.get(key).push({ ...candidate });
+  };
+
   journalRows.forEach((row) => {
     const cfEntry = buildCashflowEntry({
       date: row?.date,
@@ -278,15 +303,14 @@ const ensureCashflowIntegrity = () => {
       note: row?.note,
     });
     if (cfEntry) {
-      const candidate = sanitizeCashflowRow({
-        ...cfEntry,
-        note: row?.note || cfEntry.note || "",
-      });
-      if (candidate) {
-        expectedRows.push(candidate);
-        const key = cashflowSignature(candidate);
-        expectedCounts.set(key, (expectedCounts.get(key) || 0) + 1);
-      }
+      registerExpected(
+        {
+          ...cfEntry,
+          note: row?.note || cfEntry.note || "",
+        },
+        row?._tag,
+        row?._src
+      );
     }
 
     const debitIsCash = isCashLikeAccount(row?.debit);
@@ -305,38 +329,93 @@ const ensureCashflowIntegrity = () => {
         }
         const noteLookupKey = noteKeyFor(row);
         const receiptNote = noteLookupKey ? expenseNotes.get(noteLookupKey) || "" : "";
-        const receiptCandidate = sanitizeCashflowRow({
-          date: row?.date,
-          type: "receipt",
-          bucket,
-          amount: row?.amount,
-          fund: fundCode,
-          note: receiptNote,
-        });
-        if (receiptCandidate) {
-          expectedRows.push(receiptCandidate);
-          const key = cashflowSignature(receiptCandidate);
-          expectedCounts.set(key, (expectedCounts.get(key) || 0) + 1);
-        }
+        registerExpected(
+          {
+            date: row?.date,
+            type: "receipt",
+            bucket,
+            amount: row?.amount,
+            fund: fundCode,
+            note: receiptNote,
+          },
+          row?._tag,
+          row?._src
+        );
+        registerExpected(
+          {
+            date: row?.date,
+            type: "outgoing",
+            bucket: row?.note ? String(row.note) : desc,
+            amount: row?.amount,
+            fund: fundCode,
+            note: row?.note || "",
+          },
+          row?._tag,
+          row?._src
+        );
       }
     }
   });
 
-  const needed = new Map();
-  expectedCounts.forEach((count, key) => {
-    const have = existingCounts.get(key) || 0;
-    if (count > have) needed.set(key, count - have);
-  });
+  const existingRaw = loadCashflow();
+  const existing = [];
+  const existingCounts = new Map();
+  let mutated = false;
+
+  if (Array.isArray(existingRaw)) {
+    existingRaw.forEach((row) => {
+      const clean = sanitizeCashflowRow(row);
+      if (!clean) return;
+      const key = cashflowSignature(clean);
+      const candidates = expectedBySignature.get(key) || [];
+      if (candidates.length) {
+        const normCleanTag = normalizeTag(clean._tag);
+        let match = null;
+        if (normCleanTag) {
+          match = candidates.find(
+            (candidate) =>
+              !candidate.__used && normalizeTag(candidate._tag) === normCleanTag
+          );
+        }
+        if (!match) {
+          match = candidates.find((candidate) => !candidate.__used && candidate._tag);
+        }
+        if (!match) {
+          match = candidates.find((candidate) => !candidate.__used);
+        }
+        if (match) {
+          const normalizedMatchTag = normalizeTag(match._tag);
+          if (normalizedMatchTag && normalizedMatchTag !== normCleanTag) {
+            clean._tag = normalizedMatchTag;
+            mutated = true;
+          }
+          if (match._src && match._src !== clean._src) {
+            clean._src = match._src;
+            mutated = true;
+          }
+          match.__used = true;
+        }
+      }
+      existing.push(clean);
+      existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
+    });
+  }
 
   const additions = [];
-  expectedRows.forEach((row) => {
-    const key = cashflowSignature(row);
-    const need = needed.get(key) || 0;
-    if (need > 0) {
-      additions.push(row);
-      needed.set(key, need - 1);
+  expectedBySignature.forEach((rows, key) => {
+    const have = existingCounts.get(key) || 0;
+    const need = rows.length - have;
+    if (need <= 0) return;
+    let added = 0;
+    for (const candidate of rows) {
+      if (added >= need) break;
+      if (candidate.__used) continue;
+      additions.push({ ...candidate });
+      candidate.__used = true;
+      added++;
     }
   });
+  if (additions.length) mutated = true;
 
   const finalRows = existing.concat(additions);
   finalRows.sort((a, b) => {
@@ -367,12 +446,15 @@ const ensureCashflowIntegrity = () => {
     return fundA.localeCompare(fundB);
   });
 
-  let mutated = finalRows.length !== cleanedOriginal.length;
   if (!mutated) {
-    for (let i = 0; i < finalRows.length; i++) {
-      if (!cashflowRowsEqual(finalRows[i], cleanedOriginal[i])) {
-        mutated = true;
-        break;
+    if (finalRows.length !== cleanedOriginal.length) {
+      mutated = true;
+    } else {
+      for (let i = 0; i < finalRows.length; i++) {
+        if (!cashflowRowsEqual(finalRows[i], cleanedOriginal[i])) {
+          mutated = true;
+          break;
+        }
       }
     }
   }
@@ -381,6 +463,7 @@ const ensureCashflowIntegrity = () => {
 
   return finalRows;
 };
+
 
 // Simple (demo) hash
 function hash(s) {
@@ -911,6 +994,13 @@ if (typeof window !== "undefined") {
   window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
     syncTaggedEntryCollections,
     syncTaggedArtifacts,
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.__lsaTxn = Object.assign({}, window.__lsaTxn, {
+    purgeTransactionArtifacts,
+    ensureCashflowIntegrity,
   });
 }
 
@@ -2095,142 +2185,39 @@ function attachTransactionsHandlers() {
   }
   renderRecent();
 
-  document.getElementById("recentTable")?.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-action='delete']");
-    if (!btn) return;
-    const tag = btn.dataset.tag || btn.dataset.id;
-    if (!tag) return;
-    const txns = readTransactions();
-    const txn = txns.find((t) => t.id === tag) || null;
-    const fallbackKind = btn.dataset.kind || "transaction";
-    const fallbackDate = btn.dataset.date || "(no date)";
-    const friendlyType =
-      txn?.category === "payment"
-        ? "payment"
-        : txn?.category === "contribution"
-        ? "contribution"
-        : fallbackKind || "transaction";
-    const prompt = `Delete ${friendlyType} dated ${
-      txn?.date || fallbackDate || "(no date)"
-    }? This action will remove it from all reports.`;
-    if (!confirm(prompt)) return;
+  const recentTable = document.getElementById("recentTable");
+  if (recentTable && !recentTable.dataset.deleteBound) {
+    recentTable.dataset.deleteBound = "1";
+    recentTable.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action='delete']");
+      if (!btn) return;
+      const tag = btn.dataset.tag || btn.dataset.id;
+      if (!tag) return;
+      const txns = readTransactions();
+      const txn = txns.find((t) => t.id === tag) || null;
+      const fallbackKind = btn.dataset.kind || "transaction";
+      const fallbackDate = btn.dataset.date || "(no date)";
+      const friendlyType =
+        txn?.category === "payment"
+          ? "payment"
+          : txn?.category === "contribution"
+          ? "contribution"
+          : fallbackKind || "transaction";
+      const prompt = `Delete ${friendlyType} dated ${
+        txn?.date || fallbackDate || "(no date)"
+      }? This action will remove it from all reports.`;
+      if (!confirm(prompt)) return;
 
-    purgeTransactionArtifacts(tag);
-    alert("Transaction deleted.");
-    renderRecent();
-    if (typeof renderStatement === "function") renderStatement();
-  });
-
-  document.getElementById("recentTable")?.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-action='delete']");
-    if (!btn) return;
-    const tag = btn.dataset.tag || btn.dataset.id;
-    if (!tag) return;
-    const txns = readTransactions();
-    const txn = txns.find((t) => t.id === tag) || null;
-    const fallbackKind = btn.dataset.kind || "transaction";
-    const fallbackDate = btn.dataset.date || "(no date)";
-    const friendlyType =
-      txn?.category === "payment"
-        ? "payment"
-        : txn?.category === "contribution"
-        ? "contribution"
-        : fallbackKind || "transaction";
-    const prompt = `Delete ${friendlyType} dated ${
-      txn?.date || fallbackDate || "(no date)"
-    }? This action will remove it from all reports.`;
-    if (!confirm(prompt)) return;
-
-    if (txn) {
-      const remaining = txns.filter((t) => t.id !== tag);
-      saveTransactions(remaining);
-    } else if (txns.length) {
-      const remaining = txns.filter((t) => t.id !== tag);
-      if (remaining.length !== txns.length) saveTransactions(remaining);
-    }
-    removeJournalByTag(tag);
-    removeCashflowByTag(tag);
-    const ledgerRows = clLoad();
-    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
-    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
-    alert("Transaction deleted.");
-    renderRecent();
-    if (typeof renderStatement === "function") renderStatement();
-  });
-
-  document.getElementById("recentTable")?.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-action='delete']");
-    if (!btn) return;
-    const tag = btn.dataset.tag || btn.dataset.id;
-    if (!tag) return;
-    const txns = readTransactions();
-    const txn = txns.find((t) => t.id === tag) || null;
-    const fallbackKind = btn.dataset.kind || "transaction";
-    const fallbackDate = btn.dataset.date || "(no date)";
-    const friendlyType =
-      txn?.category === "payment"
-        ? "payment"
-        : txn?.category === "contribution"
-        ? "contribution"
-        : fallbackKind || "transaction";
-    const prompt = `Delete ${friendlyType} dated ${
-      txn?.date || fallbackDate || "(no date)"
-    }? This action will remove it from all reports.`;
-    if (!confirm(prompt)) return;
-
-    if (txn) {
-      const remaining = txns.filter((t) => t.id !== tag);
-      saveTransactions(remaining);
-    } else if (txns.length) {
-      const remaining = txns.filter((t) => t.id !== tag);
-      if (remaining.length !== txns.length) saveTransactions(remaining);
-    }
-    removeJournalByTag(tag);
-    removeCashflowByTag(tag);
-    const ledgerRows = clLoad();
-    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
-    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
-    alert("Transaction deleted.");
-    renderRecent();
-    if (typeof renderStatement === "function") renderStatement();
-  });
-
-  document.getElementById("recentTable")?.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-action='delete']");
-    if (!btn) return;
-    const tag = btn.dataset.tag || btn.dataset.id;
-    if (!tag) return;
-    const txns = readTransactions();
-    const txn = txns.find((t) => t.id === tag) || null;
-    const fallbackKind = btn.dataset.kind || "transaction";
-    const fallbackDate = btn.dataset.date || "(no date)";
-    const friendlyType =
-      txn?.category === "payment"
-        ? "payment"
-        : txn?.category === "contribution"
-        ? "contribution"
-        : fallbackKind || "transaction";
-    const prompt = `Delete ${friendlyType} dated ${
-      txn?.date || fallbackDate || "(no date)"
-    }? This action will remove it from all reports.`;
-    if (!confirm(prompt)) return;
-
-    if (txn) {
-      const remaining = txns.filter((t) => t.id !== tag);
-      saveTransactions(remaining);
-    } else if (txns.length) {
-      const remaining = txns.filter((t) => t.id !== tag);
-      if (remaining.length !== txns.length) saveTransactions(remaining);
-    }
-    removeJournalByTag(tag);
-    removeCashflowByTag(tag);
-    const ledgerRows = clLoad();
-    const keptLedger = ledgerRows.filter((row) => row._tag !== tag);
-    if (keptLedger.length !== ledgerRows.length) clSave(keptLedger);
-    alert("Transaction deleted.");
-    renderRecent();
-    if (typeof renderStatement === "function") renderStatement();
-  });
+      const result = purgeTransactionArtifacts(tag);
+      if (!result?.removed) {
+        alert("No matching records were found for this transaction.");
+        return;
+      }
+      alert("Transaction deleted.");
+      renderRecent();
+      if (typeof renderStatement === "function") renderStatement();
+    });
+  }
 
   // ----- Statements (strict believer filter + print) -----
   const stmtForm = document.getElementById("stmtForm"),
