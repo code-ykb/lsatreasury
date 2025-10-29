@@ -76,4 +76,32 @@ const { bootstrapApp } = require('./helpers');
   assert.strictEqual(totals.payments, 250, 'transactional payments should be counted');
 })();
 
+(function testDashboardTotalsTriggerCashflowRebuild() {
+  const sandbox = bootstrapApp();
+  sandbox.ensureSeedDataStrict();
+
+  const dashApi = sandbox.window.__lsaDash;
+  assert.ok(dashApi && typeof dashApi.computeDashboardTotals === 'function', 'dashboard API should expose computeDashboardTotals');
+
+  const orphan = {
+    date: '2024-10-05',
+    type: 'receipt',
+    bucket: 'Legacy Receipt',
+    amount: 8000,
+    fund: 'GEN',
+    _src: 'CONTRIB',
+  };
+
+  sandbox.localStorage.setItem('lsa_cashflow', JSON.stringify([orphan]));
+  sandbox.localStorage.setItem('lsa_journal', JSON.stringify([]));
+
+  const totals = dashApi.computeDashboardTotals(new Date('2024-10-31'));
+
+  assert.strictEqual(totals.receipts, 0, 'orphan receipts should be pruned before totals are returned');
+  assert.strictEqual(totals.payments, 0, 'no payments should remain after pruning');
+
+  const stored = JSON.parse(sandbox.localStorage.getItem('lsa_cashflow') || '[]');
+  assert.strictEqual(stored.length, 0, 'cashflow store should be cleaned when computing dashboard totals');
+})();
+
 console.log('All dashboard tests passed');
