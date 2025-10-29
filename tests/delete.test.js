@@ -30,6 +30,13 @@ const { bootstrapApp, getJSON } = require('./helpers');
   sandbox.localStorage.setItem('lsa_cashflow', JSON.stringify([cashflowRow]));
   sandbox.localStorage.setItem('lsa_transactions', JSON.stringify([txnRow]));
 
+  let refreshCalls = 0;
+  sandbox.window.__lsaDash = {
+    refresh() {
+      refreshCalls += 1;
+    },
+  };
+
   const txnApi = sandbox.window.__lsaTxn;
   assert.ok(txnApi, 'transaction helpers should be exposed on window.__lsaTxn');
   txnApi.ensureCashflowIntegrity();
@@ -39,6 +46,7 @@ const { bootstrapApp, getJSON } = require('./helpers');
   assert.strictEqual(cf.length, 1, 'expected one cashflow row before deletion');
   assert.strictEqual(cf[0]._tag, tag, 'cashflow row should inherit the transaction tag');
 
+  refreshCalls = 0;
   const result = txnApi.purgeTransactionArtifacts(tag);
   assert.ok(result && result.removed, 'purge should report that rows were removed');
 
@@ -49,6 +57,7 @@ const { bootstrapApp, getJSON } = require('./helpers');
   assert.strictEqual(cf.length, 0, 'cashflow rows should be removed for the tag');
   assert.strictEqual(journal.length, 0, 'journal rows should be removed for the tag');
   assert.strictEqual(txns.length, 0, 'transaction log entry should be removed for the tag');
+  assert.ok(refreshCalls > 0, 'dashboard refresh hook should fire when cashflow changes');
 })();
 
 console.log('All delete tests passed');
