@@ -1008,6 +1008,42 @@ if (typeof window !== "undefined") {
   });
 }
 
+const NON_TRANSACTIONAL_SOURCES = new Set(["OB", "ADJ"]);
+
+function monthBoundsISO(d = new Date()) {
+  const start = new Date(d.getFullYear(), d.getMonth(), 1);
+  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const iso = (x) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).toISOString().slice(0, 10);
+  return { from: iso(start), to: iso(end) };
+}
+
+function computeDashboardTotals(referenceDate = new Date()) {
+  ensureCashflowIntegrity();
+  const cf = loadCashflow();
+  const { from, to } = monthBoundsISO(referenceDate);
+  return cf.reduce(
+    (acc, row) => {
+      if (!row || !row.date) return acc;
+      const source = typeof row._src === "string" ? row._src.trim().toUpperCase() : "";
+      if (source && NON_TRANSACTIONAL_SOURCES.has(source)) return acc;
+      if (row.date >= from && row.date <= to) {
+        const amt = +row.amount || 0;
+        if (row.type === "receipt") acc.receipts += amt;
+        else if (row.type === "outgoing") acc.payments += amt;
+      }
+      return acc;
+    },
+    { receipts: 0, payments: 0 }
+  );
+}
+
+if (typeof window !== "undefined") {
+  window.__lsaDash = Object.assign({}, window.__lsaDash, {
+    computeDashboardTotals,
+  });
+}
+
 /* =================== (2) LOGIN, TOP BAR, DASHBOARD & FORGOT =================== */
 document.addEventListener("DOMContentLoaded", () => {
   // ---- Login ----
@@ -1117,39 +1153,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const get = (k, fb = []) =>
       JSON.parse(localStorage.getItem(k) || JSON.stringify(fb));
 
-    function monthBoundsISO(d = new Date()) {
-      const start = new Date(d.getFullYear(), d.getMonth(), 1);
-      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      const iso = (x) =>
-        new Date(x.getFullYear(), x.getMonth(), x.getDate())
-          .toISOString()
-          .slice(0, 10);
-      return { from: iso(start), to: iso(end) };
-    }
-
     function updateDashboardTiles() {
       const believers = get(BELIEVERS_KEY);
       const funds = get(FUNDS_KEY);
       $("dashBelievers") && ($("dashBelievers").textContent = believers.length);
       $("dashFunds") && ($("dashFunds").textContent = funds.length || 0);
 
-      const cf = get(CASHFLOW_KEY);
-      const { from, to } = monthBoundsISO(new Date());
-      let rec = 0,
-        pay = 0;
-      const nonTransactionalSources = new Set(["OB", "ADJ"]);
-      cf.forEach((r) => {
-        if (!r || !r.date) return;
-        const source = typeof r._src === "string" ? r._src.trim().toUpperCase() : "";
-        if (source && nonTransactionalSources.has(source)) return;
-        if (r.date >= from && r.date <= to) {
-          const amt = +r.amount || 0;
-          if (r.type === "receipt") rec += amt;
-          else if (r.type === "outgoing") pay += amt;
-        }
-      });
-      $("dashReceipts") && ($("dashReceipts").textContent = rec.toFixed(2));
-      $("dashPayments") && ($("dashPayments").textContent = pay.toFixed(2));
+      const totals = computeDashboardTotals();
+      $("dashReceipts") && ($("dashReceipts").textContent = totals.receipts.toFixed(2));
+      $("dashPayments") && ($("dashPayments").textContent = totals.payments.toFixed(2));
     }
 
     updateDashboardTiles();
@@ -1163,6 +1175,15 @@ document.addEventListener("DOMContentLoaded", () => {
         updateDashboardTiles();
       }
     });
+
+    if (typeof window !== "undefined") {
+      window.__lsaDash = Object.assign({}, window.__lsaDash, {
+        refreshDashboardTiles: () => {
+          updateDashboardTiles();
+          return computeDashboardTotals();
+        },
+      });
+    }
   }
 });
 
