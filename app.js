@@ -1133,11 +1133,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const { from, to } = monthBoundsISO(new Date());
       let rec = 0,
         pay = 0;
-      const transactionalSources = new Set(["CONTRIB", "PAYMENT"]);
+      const nonTransactionalSources = new Set(["OB", "ADJ"]);
       cf.forEach((r) => {
         if (!r || !r.date) return;
         const source = typeof r._src === "string" ? r._src.trim().toUpperCase() : "";
-        if (source && !transactionalSources.has(source)) return;
+        if (source && nonTransactionalSources.has(source)) return;
         if (r.date >= from && r.date <= to) {
           const amt = +r.amount || 0;
           if (r.type === "receipt") rec += amt;
