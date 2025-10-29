@@ -35,6 +35,15 @@ const { bootstrapApp } = require('./helpers');
     'opening balance entry should be tagged as OB'
   );
 
+  const legacyEntry = {
+    date,
+    type: 'receipt',
+    bucket: 'Legacy Receipt',
+    amount: 400,
+    fund: 'GEN',
+    _src: 'LEGACY',
+  };
+
   const transactionalEntry = {
     date,
     type: 'outgoing',
@@ -46,15 +55,15 @@ const { bootstrapApp } = require('./helpers');
 
   sandbox.localStorage.setItem(
     'lsa_cashflow',
-    JSON.stringify([...currentCashflow, transactionalEntry])
+    JSON.stringify([...currentCashflow, legacyEntry, transactionalEntry])
   );
 
-  const allowedSources = new Set(['CONTRIB', 'PAYMENT']);
+  const disallowedSources = new Set(['OB', 'ADJ']);
   const totals = JSON.parse(sandbox.localStorage.getItem('lsa_cashflow') || '[]').reduce(
     (acc, row) => {
       if (!row || !row.date) return acc;
       const source = typeof row._src === 'string' ? row._src.trim().toUpperCase() : '';
-      if (source && !allowedSources.has(source)) return acc;
+      if (source && disallowedSources.has(source)) return acc;
       const amt = Number(row.amount) || 0;
       if (row.type === 'receipt') acc.receipts += amt;
       else if (row.type === 'outgoing') acc.payments += amt;
@@ -63,7 +72,7 @@ const { bootstrapApp } = require('./helpers');
     { receipts: 0, payments: 0 }
   );
 
-  assert.strictEqual(totals.receipts, 0, 'OB receipts should be ignored');
+  assert.strictEqual(totals.receipts, 400, 'legacy receipts should be counted');
   assert.strictEqual(totals.payments, 250, 'transactional payments should be counted');
 })();
 
