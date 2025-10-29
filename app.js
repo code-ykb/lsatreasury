@@ -25,8 +25,25 @@ const loadJSON = (k, fallback = []) =>
   JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
 const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
+const globalWindow = () => {
+  if (typeof window !== "undefined" && window) return window;
+  if (typeof globalThis !== "undefined" && globalThis.window) return globalThis.window;
+  return null;
+};
+
 const loadCashflow = () => loadJSON(CASHFLOW_KEY);
-const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
+const saveCashflow = (rows) => {
+  saveJSON(CASHFLOW_KEY, rows);
+  const win = globalWindow();
+  const dash = win && win.__lsaDash;
+  if (dash && typeof dash.refresh === "function") {
+    try {
+      dash.refresh();
+    } catch (err) {
+      console.error("Failed to refresh dashboard tiles", err);
+    }
+  }
+};
 const loadTransactions = () => loadJSON(TRANSACTIONS_KEY);
 const saveTransactions = (rows) => saveJSON(TRANSACTIONS_KEY, rows);
 const postCashflow = (
@@ -1146,6 +1163,12 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       $("dashReceipts") && ($("dashReceipts").textContent = rec.toFixed(2));
       $("dashPayments") && ($("dashPayments").textContent = pay.toFixed(2));
+    }
+
+    const win = globalWindow();
+    if (win) {
+      win.__lsaDash = win.__lsaDash || {};
+      win.__lsaDash.refresh = updateDashboardTiles;
     }
 
     updateDashboardTiles();
