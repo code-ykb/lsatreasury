@@ -84,6 +84,15 @@ a:hover {
   color: var(--text-muted);
 }
 
+.topbar-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
 /* --- Layout shell --- */
 .dash-wrap {
   max-width: 1240px;
