@@ -1413,6 +1413,12 @@ function attachTransactionsHandlers() {
   document.getElementById("tabStatements").addEventListener("click", () =>
     show(false, false, false, true)
   );
+  document.getElementById("tabAdjustments")?.addEventListener("click", () => {
+    window.location.href = "adjustments.html?tab=adj";
+  });
+  document.getElementById("tabOpeningBalances")?.addEventListener("click", () => {
+    window.location.href = "adjustments.html?tab=ob";
+  });
   show(true, false, false, false);
 
   // Helpers
@@ -2555,14 +2561,22 @@ function attachAdjustmentsHandlers() {
   // Tabs
   const obSection = document.getElementById("obSection");
   const adjSection = document.getElementById("adjSection");
-  document.getElementById("tabOB").addEventListener("click", () => {
-    obSection.style.display = "";
-    adjSection.style.display = "none";
-  });
-  document.getElementById("tabADJ").addEventListener("click", () => {
+  const showAdjustmentsTab = () => {
     obSection.style.display = "none";
     adjSection.style.display = "";
-  });
+  };
+  const showOpeningBalancesTab = () => {
+    obSection.style.display = "";
+    adjSection.style.display = "none";
+  };
+  document.getElementById("tabOB").addEventListener("click", showOpeningBalancesTab);
+  document.getElementById("tabADJ").addEventListener("click", showAdjustmentsTab);
+  const initialTab = new URLSearchParams(window.location.search).get("tab");
+  if (initialTab === "adj") {
+    showAdjustmentsTab();
+  } else {
+    showOpeningBalancesTab();
+  }
 
   const funds = loadJSON(FUNDS_KEY);
   const coa = loadJSON(COA_KEY).sort((a, b) => a.code.localeCompare(b.code));
