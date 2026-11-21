@@ -4885,3 +4885,10 @@ function attachUsersHandlers() {
   });
 }
 document.addEventListener("DOMContentLoaded", attachUsersHandlers);
+
+/* =================== Installable app (PWA) =================== */
+if (typeof window !== "undefined" && typeof navigator !== "undefined" && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}

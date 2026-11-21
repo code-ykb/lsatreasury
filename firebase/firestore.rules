@@ -1,0 +1,166 @@
+rules_version = '2';
+
+// LSA Treasury: server-side access rules.
+//
+// Roles
+//   TREASURER        full access; the only role that can appoint a Treasurer
+//   VICE_TREASURER   full access; manages all users except the Treasurer
+//   CHAIRPERSON, VICE_CHAIRPERSON, SECRETARY, VICE_SECRETARY, MEMBER
+//                    read-only: only the published reports the Treasurer
+//                    or Vice Treasurer has ticked for that person
+// Believers do not log in. They are records (profile + CIF) in the books.
+//
+// Controls
+//   - The first person to sign in on a new installation becomes Treasurer.
+//     This can happen once only; there is no Super Admin.
+//   - Nobody can change their own role or status, except the Treasurer when
+//     handing over the role to someone else in the same step.
+//   - Every write to the books or to users must carry its own audit entry,
+//     written in the same step. Audit entries can never be changed or deleted.
+//   - Records in the books are never hard-deleted; they are marked deleted.
+
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    // ---------- helpers ----------
+    function signedIn() { return request.auth != null; }
+    function userPath(uid) { return /databases/$(db)/documents/users/$(uid); }
+    function auditPath(aid) { return /databases/$(db)/documents/audit/$(aid); }
+    function me() { return get(userPath(request.auth.uid)).data; }
+    function active() {
+      return signedIn() && exists(userPath(request.auth.uid)) && me().active == true;
+    }
+    function managerRoles() { return ['TREASURER', 'VICE_TREASURER']; }
+    function officerRoles() {
+      return ['CHAIRPERSON', 'VICE_CHAIRPERSON', 'SECRETARY', 'VICE_SECRETARY', 'MEMBER'];
+    }
+    function allRoles() { return managerRoles().concat(officerRoles()); }
+    function reportTypes() { return ['TB', 'CF', 'IS', 'BS', 'FUND']; }
+    function bookCollections() {
+      return ['believers', 'funds', 'coa', 'transactions', 'journal', 'cashflow',
+              'contribLedger', 'postingRules', 'adjustments', 'openingBalances',
+              'settings'];
+    }
+    function isManager() { return active() && me().role in managerRoles(); }
+    function isTreasurer() { return active() && me().role == 'TREASURER'; }
+
+    // The write must be accompanied by a new audit entry, created in the same
+    // batch, by the same person, naming this exact record.
+    function audited(aid, target) {
+      return aid is string
+        && !exists(auditPath(aid))
+        && existsAfter(auditPath(aid))
+        && getAfter(auditPath(aid)).data.target == target
+        && getAfter(auditPath(aid)).data.actor == request.auth.uid;
+    }
+
+    function validUser(d) {
+      return d.keys().hasOnly(['name', 'email', 'role', 'active', 'reports',
+                               'auditId', 'handoverTo', 'updatedAt', 'updatedBy'])
+        && d.keys().hasAll(['name', 'email', 'role', 'active', 'reports',
+                            'auditId', 'updatedAt', 'updatedBy'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 100
+        && d.email is string && d.email.size() <= 200
+        && d.role in allRoles()
+        && d.active is bool
+        && d.reports is list && d.reports.hasOnly(reportTypes())
+        && d.updatedAt == request.time
+        && d.updatedBy == request.auth.uid;
+    }
+
+    // ---------- first-time set-up (replaces the Super Admin) ----------
+    match /system/bootstrap {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['treasurerUid', 'at'])
+        && request.resource.data.treasurerUid == request.auth.uid
+        && request.resource.data.at == request.time
+        && getAfter(userPath(request.auth.uid)).data.role == 'TREASURER';
+      allow update, delete: if false;
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if active() && (request.auth.uid == uid || me().role in managerRoles());
+
+      // First sign-in on a new installation: become Treasurer, once only.
+      allow create: if signedIn() && uid == request.auth.uid
+        && !exists(/databases/$(db)/documents/system/bootstrap)
+        && existsAfter(/databases/$(db)/documents/system/bootstrap)
+        && validUser(request.resource.data)
+        && request.resource.data.role == 'TREASURER'
+        && request.resource.data.active == true
+        && audited(request.resource.data.auditId, 'users/' + uid);
+
+      // Treasurer / Vice Treasurer create other users.
+      allow create: if isManager() && uid != request.auth.uid
+        && validUser(request.resource.data)
+        && (isTreasurer() || request.resource.data.role != 'TREASURER')
+        && audited(request.resource.data.auditId, 'users/' + uid);
+
+      // Treasurer / Vice Treasurer change other users.
+      // The Vice Treasurer cannot touch the Treasurer or appoint one.
+      allow update: if isManager() && uid != request.auth.uid
+        && validUser(request.resource.data)
+        && (isTreasurer()
+            || (resource.data.role != 'TREASURER'
+                && request.resource.data.role != 'TREASURER'))
+        && audited(request.resource.data.auditId, 'users/' + uid);
+
+      // Handover: the Treasurer steps down only while appointing a new,
+      // active Treasurer in the same step.
+      allow update: if isTreasurer() && uid == request.auth.uid
+        && validUser(request.resource.data)
+        && request.resource.data.role != 'TREASURER'
+        && request.resource.data.handoverTo is string
+        && request.resource.data.handoverTo != request.auth.uid
+        && getAfter(userPath(request.resource.data.handoverTo)).data.role == 'TREASURER'
+        && getAfter(userPath(request.resource.data.handoverTo)).data.active == true
+        && audited(request.resource.data.auditId, 'users/' + uid);
+
+      allow delete: if false; // switch off (active = false) instead
+    }
+
+    // ---------- the books (Treasurer / Vice Treasurer only) ----------
+    match /books/{coll}/records/{id} {
+      allow read: if isManager() && coll in bookCollections();
+      allow create, update: if isManager() && coll in bookCollections()
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && audited(request.resource.data.auditId, 'books/' + coll + '/records/' + id);
+      allow delete: if false; // mark deleted instead
+    }
+
+    // ---------- published reports ----------
+    match /reports/{id} {
+      allow read: if isManager()
+        || (active() && resource.data.type in me().reports);
+      allow create, update: if isManager()
+        && request.resource.data.type in reportTypes()
+        && request.resource.data.publishedBy == request.auth.uid
+        && request.resource.data.publishedAt == request.time
+        && audited(request.resource.data.auditId, 'reports/' + id);
+      allow delete: if false;
+    }
+
+    // ---------- audit log: append-only ----------
+    match /audit/{aid} {
+      allow read: if isManager();
+      // Active users only, plus the one-off first set-up.
+      allow create: if (active()
+            || (signedIn() && !exists(/databases/$(db)/documents/system/bootstrap)))
+        && request.resource.data.keys().hasOnly(['actor', 'at', 'action', 'target',
+                                                 'summary', 'before', 'after'])
+        && request.resource.data.actor == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.action is string
+        && request.resource.data.target is string;
+      allow update, delete: if false;
+    }
+
+    // ---------- everything else is closed ----------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

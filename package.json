@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "LSA Treasury static app",
   "scripts": {
-    "test": "node tests/seed.test.js && node tests/delete.test.js && node tests/dashboard.test.js"
+    "test": "node tests/seed.test.js && node tests/delete.test.js && node tests/dashboard.test.js",
+    "test:rules": "firebase emulators:exec --only firestore --project lsa-treasury-test \"node tests/rules.test.mjs\""
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.37.0",
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0"
   }
 }
