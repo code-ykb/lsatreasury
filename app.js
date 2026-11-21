@@ -26,6 +26,19 @@ const loadJSON = (k, fallback = []) =>
   JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
 const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
+// HTML-escape helper (shared by all pages)
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) => {
+    const map = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return map[ch] || ch;
+  });
+
 const loadCashflow = () => loadJSON(CASHFLOW_KEY);
 const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
 const loadTransactions = () => loadJSON(TRANSACTIONS_KEY);
@@ -540,7 +553,10 @@ const findUserByEmail = (email) =>
 const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
 const SUPER_ADMIN_NAME = "Super Admin";
 const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
-const SUPER_ADMIN_PASSWORD_HASH = "-1458677651"; // hash("SuperAdmin!2024")
+// Former shared default password hash. Any Super Admin still on it must set
+// their own password at next login.
+const LEGACY_SUPER_ADMIN_PASSWORD_HASH = "-1458677651";
+const SUPER_ADMIN_MIN_PASSWORD = 10;
 const ROLE_LABELS = {
   [SUPER_ADMIN_ROLE]: "Super Admin",
   "ADMIN": "Admin",
@@ -566,7 +582,7 @@ function ensureSuperAdminAccount() {
       email: SUPER_ADMIN_EMAIL,
       role: SUPER_ADMIN_ROLE,
       believerId: "",
-      pwHash: SUPER_ADMIN_PASSWORD_HASH,
+      pwHash: "", // set by the Super Admin at first login
       mustChangePW: false,
       createdAt: new Date().toISOString(),
       builtIn: true,
@@ -586,8 +602,8 @@ function ensureSuperAdminAccount() {
     current.email = SUPER_ADMIN_EMAIL;
     mutated = true;
   }
-  if (current.pwHash !== SUPER_ADMIN_PASSWORD_HASH) {
-    current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
+  if (current.pwHash === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
+    current.pwHash = "";
     mutated = true;
   }
   if (current.builtIn !== true) {
@@ -1066,6 +1082,32 @@ document.addEventListener("DOMContentLoaded", () => {
           );
           return;
         }
+        if (user.builtIn && user.role === SUPER_ADMIN_ROLE && !user.pwHash) {
+          // First login on this device: the Super Admin chooses a password.
+          if (p.length < SUPER_ADMIN_MIN_PASSWORD) {
+            alert(
+              `Set a Super Admin password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters. Enter it in the Password field and press Login.`
+            );
+            return;
+          }
+          if (hash(p) === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
+            alert("That is the old shared default password. Choose a different one.");
+            return;
+          }
+          const confirmPw = window.prompt("Confirm the new Super Admin password:");
+          if (confirmPw === null) return;
+          if (confirmPw.trim() !== p) {
+            alert("Passwords do not match. Nothing was saved.");
+            return;
+          }
+          const users = loadUsers();
+          const rec = users.find((x) => x.id === user.id);
+          if (!rec) return alert("User not found.");
+          rec.pwHash = hash(p);
+          saveUsers(users);
+          user.pwHash = rec.pwHash;
+          alert("Super Admin password set. Keep it safe; it cannot be recovered.");
+        }
         if (user.pwHash !== hash(p)) {
           alert("Invalid email/password.");
           return;
@@ -1387,7 +1429,7 @@ function attachTransactionsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -1445,17 +1487,6 @@ function attachTransactionsHandlers() {
     PAY_GEN_CASH: "General Fund Payment (Cash)",
     PAY_EARMARK: "Earmarked Fund Payment",
   };
-  const escapeHtml = (value) =>
-    String(value ?? "").replace(/[&<>"']/g, (ch) => {
-      const map = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      return map[ch] || ch;
-    });
   const fundAccounts = (code) => {
     const coa = loadJSON(COA_KEY);
     return {
@@ -2496,7 +2527,7 @@ function attachSettingsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -2550,7 +2581,7 @@ function attachAdjustmentsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -2873,7 +2904,7 @@ function attachReportsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -3854,7 +3885,7 @@ function attachFundsHandlers() {
     return;
   }
   const s = JSON.parse(rawSess);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -4119,7 +4150,7 @@ function attachPostingRulesHandlers() {
   }
   const session = JSON.parse(rawSession);
   const who = document.getElementById("whoami");
-  if (who) who.textContent = `${session.user} (${session.role})`;
+  if (who) who.textContent = `${session.user} (${formatRole(session.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
