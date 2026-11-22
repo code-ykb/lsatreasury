@@ -4930,3 +4930,13 @@ if (typeof window !== "undefined" && typeof navigator !== "undefined" && "servic
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
+
+/* Mobile menu: keep the current page visible in the swipeable bar */
+if (typeof document !== "undefined") {
+  document.addEventListener("DOMContentLoaded", () => {
+    const cur = document.querySelector(".side .navlink.active");
+    if (cur && cur.scrollIntoView) {
+      try { cur.scrollIntoView({ inline: "center", block: "nearest" }); } catch (e) {}
+    }
+  });
+}

@@ -1380,3 +1380,165 @@ textarea:focus {
   border-radius: 8px;
   padding: 10px 12px;
 }
+
+/* =================== Mobile layout =================== */
+/* Email, phone and search fields look like the other fields */
+input[type="email"],
+input[type="tel"],
+input[type="search"],
+input[type="url"] {
+  width: 100%;
+  height: 44px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-main);
+  font: inherit;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (max-width: 800px) {
+  /* Nothing may push the page wider than the screen */
+  .dash-wrap > *,
+  .main > *,
+  .grid2 > *,
+  .card,
+  .section > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-wrap .table {
+    min-width: 520px;
+  }
+
+  /* Top bar */
+  .topbar {
+    padding: 12px 16px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .brand-title {
+    font-size: 17px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .topbar-meta {
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  /* Menu: a swipeable bar under the top bar, always in reach */
+  .dash-wrap {
+    margin: 0 auto 28px;
+    padding: 0 12px;
+    gap: 14px;
+  }
+  .side {
+    order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    margin: 0 -12px;
+    max-width: none;
+    padding: 8px 12px;
+    border-radius: 0;
+    border-width: 0 0 1px 0;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  }
+  .main {
+    order: 1;
+  }
+  .side nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .side nav::-webkit-scrollbar {
+    display: none;
+  }
+  .side .navlink,
+  .side .btn-logout {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 999px;
+    scroll-snap-align: center;
+  }
+  .side .navlink i {
+    display: none;
+  }
+
+  /* Cards, headings, forms */
+  .card {
+    padding: 18px 16px;
+  }
+  .main {
+    gap: 18px;
+  }
+  .page-header h2,
+  .main > h2 {
+    font-size: 22px;
+  }
+  .btn-group,
+  .actions {
+    flex-wrap: wrap;
+  }
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger,
+  button {
+    min-height: 44px;
+  }
+  /* 16px stops iPhone and iPad zooming in when a field is tapped */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Report tabs and other button rows wrap instead of running off screen */
+  .tabs {
+    flex-wrap: wrap;
+  }
+  .tabs .btn-secondary {
+    flex: 1 1 calc(50% - 6px);
+  }
+  form [style*="display:flex"] {
+    flex-wrap: wrap;
+  }
+
+  /* Dialogs fit the screen */
+  .modal {
+    width: calc(100vw - 24px);
+    max-width: 100%;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .tile {
+    padding: 16px 14px;
+  }
+}
