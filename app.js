@@ -26,6 +26,19 @@ const loadJSON = (k, fallback = []) =>
   JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
 const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
+// HTML-escape helper (shared by all pages)
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) => {
+    const map = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return map[ch] || ch;
+  });
+
 const loadCashflow = () => loadJSON(CASHFLOW_KEY);
 const saveCashflow = (rows) => saveJSON(CASHFLOW_KEY, rows);
 const loadTransactions = () => loadJSON(TRANSACTIONS_KEY);
@@ -540,7 +553,10 @@ const findUserByEmail = (email) =>
 const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
 const SUPER_ADMIN_NAME = "Super Admin";
 const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
-const SUPER_ADMIN_PASSWORD_HASH = "-1458677651"; // hash("SuperAdmin!2024")
+// Former shared default password hash. Any Super Admin still on it must set
+// their own password at next login.
+const LEGACY_SUPER_ADMIN_PASSWORD_HASH = "-1458677651";
+const SUPER_ADMIN_MIN_PASSWORD = 10;
 const ROLE_LABELS = {
   [SUPER_ADMIN_ROLE]: "Super Admin",
   "ADMIN": "Admin",
@@ -566,7 +582,7 @@ function ensureSuperAdminAccount() {
       email: SUPER_ADMIN_EMAIL,
       role: SUPER_ADMIN_ROLE,
       believerId: "",
-      pwHash: SUPER_ADMIN_PASSWORD_HASH,
+      pwHash: "", // set by the Super Admin at first login
       mustChangePW: false,
       createdAt: new Date().toISOString(),
       builtIn: true,
@@ -586,8 +602,8 @@ function ensureSuperAdminAccount() {
     current.email = SUPER_ADMIN_EMAIL;
     mutated = true;
   }
-  if (current.pwHash !== SUPER_ADMIN_PASSWORD_HASH) {
-    current.pwHash = SUPER_ADMIN_PASSWORD_HASH;
+  if (current.pwHash === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
+    current.pwHash = "";
     mutated = true;
   }
   if (current.builtIn !== true) {
@@ -1052,23 +1068,57 @@ document.addEventListener("DOMContentLoaded", () => {
   // ---- Login ----
   const loginForm = document.getElementById("loginForm");
   if (loginForm) {
+    // Show login messages on the page (pop-up dialogs are blocked in some viewers).
+    const loginNotice = (msg) => {
+      const el = document.getElementById("loginMsg");
+      if (el) el.textContent = msg;
+      else alert(msg);
+    };
+
     loginForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const u = document.getElementById("username").value.trim(); // email preferred
       const p = document.getElementById("password").value.trim();
-      if (!u || !p) return alert("Enter User ID and Password");
+      if (!u || !p) return loginNotice("Enter User ID and Password");
 
       const user = findUserByEmail(u);
       if (user) {
         if (user.mustChangePW) {
-          alert(
+          return loginNotice(
             "First login detected. Please use the reset link sent to you to set a new password."
           );
-          return;
+        }
+        if (user.builtIn && user.role === SUPER_ADMIN_ROLE && !user.pwHash) {
+          // First login on this device: the Super Admin chooses a password.
+          const confirmRow = document.getElementById("confirmRow");
+          const confirmInput = document.getElementById("passwordConfirm");
+          if (confirmRow && confirmRow.hidden) {
+            confirmRow.hidden = false;
+            confirmInput.focus();
+            return loginNotice(
+              `First login: choose a Super Admin password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters, type it again in the new box, then press Login.`
+            );
+          }
+          if (p.length < SUPER_ADMIN_MIN_PASSWORD) {
+            return loginNotice(
+              `Password must be at least ${SUPER_ADMIN_MIN_PASSWORD} characters.`
+            );
+          }
+          if (hash(p) === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
+            return loginNotice("That is the old shared default password. Choose a different one.");
+          }
+          if ((confirmInput ? confirmInput.value.trim() : "") !== p) {
+            return loginNotice("Passwords do not match. Nothing was saved.");
+          }
+          const users = loadUsers();
+          const rec = users.find((x) => x.id === user.id);
+          if (!rec) return loginNotice("User not found.");
+          rec.pwHash = hash(p);
+          saveUsers(users);
+          user.pwHash = rec.pwHash;
         }
         if (user.pwHash !== hash(p)) {
-          alert("Invalid email/password.");
-          return;
+          return loginNotice("Invalid email/password.");
         }
         localStorage.setItem(
           SESSION_KEY,
@@ -1083,7 +1133,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "dashboard.html";
         return;
       }
-      alert("Invalid email/password.");
+      loginNotice("Invalid email/password.");
     });
 
     // Forgot Password
@@ -1387,7 +1437,7 @@ function attachTransactionsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -1445,17 +1495,6 @@ function attachTransactionsHandlers() {
     PAY_GEN_CASH: "General Fund Payment (Cash)",
     PAY_EARMARK: "Earmarked Fund Payment",
   };
-  const escapeHtml = (value) =>
-    String(value ?? "").replace(/[&<>"']/g, (ch) => {
-      const map = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      return map[ch] || ch;
-    });
   const fundAccounts = (code) => {
     const coa = loadJSON(COA_KEY);
     return {
@@ -2496,7 +2535,7 @@ function attachSettingsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -2550,7 +2589,7 @@ function attachAdjustmentsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -2873,7 +2912,7 @@ function attachReportsHandlers() {
     return;
   }
   const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -3854,7 +3893,7 @@ function attachFundsHandlers() {
     return;
   }
   const s = JSON.parse(rawSess);
-  document.getElementById("whoami").textContent = `${s.user} (${s.role})`;
+  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -4119,7 +4158,7 @@ function attachPostingRulesHandlers() {
   }
   const session = JSON.parse(rawSession);
   const who = document.getElementById("whoami");
-  if (who) who.textContent = `${session.user} (${session.role})`;
+  if (who) who.textContent = `${session.user} (${formatRole(session.role)})`;
   document.getElementById("logoutBtn")?.addEventListener("click", () => {
     localStorage.removeItem(SESSION_KEY);
     window.location.href = "index.html";
@@ -4854,3 +4893,10 @@ function attachUsersHandlers() {
   });
 }
 document.addEventListener("DOMContentLoaded", attachUsersHandlers);
+
+/* =================== Installable app (PWA) =================== */
+if (typeof window !== "undefined" && typeof navigator !== "undefined" && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}

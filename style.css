@@ -172,6 +172,12 @@ nav {
 .main {
   display: grid;
   gap: 26px;
+  align-content: start;
+}
+
+.main > h2,
+.main > p {
+  margin: 0;
 }
 
 .page-header {
@@ -203,7 +209,8 @@ nav {
   font-size: 14px;
 }
 
-.header-meta .chip {
+.header-meta .chip,
+.topbar-meta .chip {
   padding: 6px 12px;
   border-radius: 999px;
   background: var(--brand-100);

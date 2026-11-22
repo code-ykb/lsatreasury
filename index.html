@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LSA Treasury System | Login</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1d4ed8">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
@@ -37,6 +41,11 @@
           <label for="password">Password</label>
           <input id="password" type="password" autocomplete="current-password" />
         </div>
+        <div class="form-row" id="confirmRow" hidden>
+          <label for="passwordConfirm">Confirm new password</label>
+          <input id="passwordConfirm" type="password" autocomplete="new-password" />
+        </div>
+        <p id="loginMsg" role="alert" style="margin:8px 0;font-size:14px;font-weight:600;"></p>
         <button class="btn-primary" type="submit">LOGIN</button>
         <div class="help-links">
   <a href="#" id="lnkForgot">Forgot Password?</a>
