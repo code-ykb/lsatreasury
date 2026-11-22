@@ -4,8 +4,6 @@
 const SESSION_KEY = "lsa_session";
 
 // Storage keys (single source of truth)
-const USERS_KEY           = "lsa_users";
-const RESETS_KEY          = "lsa_pw_resets";
 const JOURNAL_KEY         = "lsa_journal";
 const CASHFLOW_KEY        = "lsa_cashflow";
 const CONTRIB_LEDGER_KEY  = "lsa_contrib_ledger";
@@ -15,16 +13,21 @@ const BELIEVERS_KEY       = "lsa_believers";
 const TRANSACTIONS_KEY    = "lsa_transactions";
 const POSTING_RULES_KEY   = "lsa_posting_rules";
 
-// Admin sender (for future use)
-const ADMIN_FROM_EMAIL = "treasurylocalspiritualassembly@gmail.com";
-
-// Apps Script endpoint (leave placeholder to simulate emails)
-const APPS_SCRIPT_MAIL_ENDPOINT = "https://script.google.com/macros/s/AKfycbwpbgf9oU_UCs25gpqmTdIo6WaFyk0VW9B7V_Ku3dHVYBUdK1TrbTd0xtCqEZMydVsenw/exec";
-
 // Simple JSON helpers
 const loadJSON = (k, fallback = []) =>
   JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
-const saveJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const saveJSON = (k, v) => {
+  localStorage.setItem(k, JSON.stringify(v));
+  // Online: send every change to the database (see cloud.js).
+  if (typeof window !== "undefined" && typeof window.__lsaSync === "function") window.__lsaSync(k, v);
+};
+
+// Run a screen's start-up code once the page is ready. Online, that is after
+// sign-in and after the books have been loaded (see boot.js).
+const onLsaReady = (fn) => {
+  if (typeof window !== "undefined" && window.__LSA_BOOT) window.__LSA_BOOT.then(fn);
+  else document.addEventListener("DOMContentLoaded", fn);
+};
 
 // HTML-escape helper (shared by all pages)
 const escapeHtml = (value) =>
@@ -485,16 +488,6 @@ const ensureCashflowIntegrity = () => {
 };
 
 
-// Simple (demo) hash
-function hash(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (h << 5) - h + s.charCodeAt(i);
-    h |= 0;
-  }
-  return String(h);
-}
-
 // UUID (lightweight)
 function uuid() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -504,132 +497,17 @@ function uuid() {
   });
 }
 
-// Email sender (CORS-safe; no preflight)
-async function sendMail({ to, subject, htmlBody, cc = "", bcc = "" }) {
-  // quick guard during local dev if you forgot to paste the endpoint
-  if (!APPS_SCRIPT_MAIL_ENDPOINT || !APPS_SCRIPT_MAIL_ENDPOINT.includes("/exec")) {
-    console.warn("[Simulated email]", { to, subject, htmlBody, cc, bcc });
-    alert("Simulated email (no endpoint set). Paste your Apps Script Web App URL into APPS_SCRIPT_MAIL_ENDPOINT.");
-    return true;
-  }
-
-  try {
-    const res = await fetch(APPS_SCRIPT_MAIL_ENDPOINT, {
-      method: "POST",
-      // text/plain avoids the OPTIONS preflight; the body is still JSON text
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ to, subject, htmlBody, cc, bcc }),
-    });
-
-    // Try to read JSON (some browsers will still block reading without CORS headers)
-    let ok = res.ok;
-    try {
-      const j = await res.json();
-      ok = j && j.ok;
-      if (!ok) throw new Error(j && j.error ? j.error : "Mailer error");
-    } catch (_) {
-      // If JSON is blocked by CORS but status is 200, we assume success
-      if (!res.ok) throw new Error("Network error");
-    }
-
-    return true;
-  } catch (e) {
-    console.error("sendMail failed", e);
-    alert("Email send failed: " + e.message);
-    return false;
-  }
-}
-
-// Users helpers
-const loadUsers = () => loadJSON(USERS_KEY, []);
-const saveUsers = (v) => saveJSON(USERS_KEY, v);
-const loadResets = () => loadJSON(RESETS_KEY, []);
-const saveResets = (v) => saveJSON(RESETS_KEY, v);
-const findUserByEmail = (email) =>
-  loadUsers().find(
-    (u) => (u.email || "").toLowerCase() === (email || "").toLowerCase()
-  );
-
-const SUPER_ADMIN_EMAIL = "super.admin@lsatreasury.app";
-const SUPER_ADMIN_NAME = "Super Admin";
-const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
-// Former shared default password hash. Any Super Admin still on it must set
-// their own password at next login.
-const LEGACY_SUPER_ADMIN_PASSWORD_HASH = "-1458677651";
-const SUPER_ADMIN_MIN_PASSWORD = 10;
+// Role names shown on screen
 const ROLE_LABELS = {
-  [SUPER_ADMIN_ROLE]: "Super Admin",
-  "ADMIN": "Admin",
-  "LSA_MEMBER": "LSA Member",
-  "BELIEVER": "Believer",
+  TREASURER: "Treasurer",
+  VICE_TREASURER: "Vice Treasurer",
+  CHAIRPERSON: "Chairperson",
+  VICE_CHAIRPERSON: "Vice Chairperson",
+  SECRETARY: "Secretary",
+  VICE_SECRETARY: "Vice Secretary",
+  MEMBER: "Member",
 };
 const formatRole = (role) => ROLE_LABELS[role] || role || "";
-
-function ensureSuperAdminAccount() {
-  const users = loadUsers();
-  let idx = users.findIndex(
-    (u) => (u.email || "").toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
-  );
-
-  if (idx === -1) {
-    idx = users.findIndex((u) => u.builtIn && u.role === SUPER_ADMIN_ROLE);
-  }
-
-  if (idx === -1) {
-    users.push({
-      id: uuid(),
-      name: SUPER_ADMIN_NAME,
-      email: SUPER_ADMIN_EMAIL,
-      role: SUPER_ADMIN_ROLE,
-      believerId: "",
-      pwHash: "", // set by the Super Admin at first login
-      mustChangePW: false,
-      createdAt: new Date().toISOString(),
-      builtIn: true,
-    });
-    saveUsers(users);
-    return;
-  }
-
-  const current = users[idx];
-  let mutated = false;
-
-  if (current.role !== SUPER_ADMIN_ROLE) {
-    current.role = SUPER_ADMIN_ROLE;
-    mutated = true;
-  }
-  if ((current.email || "").toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
-    current.email = SUPER_ADMIN_EMAIL;
-    mutated = true;
-  }
-  if (current.pwHash === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
-    current.pwHash = "";
-    mutated = true;
-  }
-  if (current.builtIn !== true) {
-    current.builtIn = true;
-    mutated = true;
-  }
-  if (!current.name) {
-    current.name = SUPER_ADMIN_NAME;
-    mutated = true;
-  }
-  if (current.mustChangePW) {
-    current.mustChangePW = false;
-    mutated = true;
-  }
-
-  if (mutated) saveUsers(users);
-}
-
-try { ensureSuperAdminAccount(); } catch (e) { window.__lsaStorageError = e; }
-
-if (typeof window !== "undefined") {
-  window.__lsaAuth = Object.assign({}, window.__lsaAuth, {
-    ensureSuperAdminAccount,
-    formatRole,
-  });
-}
 
 /* =================== (1) COA / FUNDS SEEDING (kept as before) =================== */
 const ACCT_TYPES = {
@@ -1063,146 +941,8 @@ if (typeof window !== "undefined") {
   });
 }
 
-/* =================== (2) LOGIN, TOP BAR, DASHBOARD & FORGOT =================== */
-document.addEventListener("DOMContentLoaded", () => {
-  // ---- Login ----
-  const loginForm = document.getElementById("loginForm");
-  if (loginForm) {
-    // Show login messages on the page (pop-up dialogs are blocked in some viewers).
-    const loginNotice = (msg) => {
-      const el = document.getElementById("loginMsg");
-      if (el) el.textContent = msg;
-      else alert(msg);
-    };
-
-    // Storage blocked (private browsing, "block all cookies"): say so on the page.
-    const storageMsg =
-      "This browser is blocking storage for this site, so login cannot work. Turn off Private Browsing or 'Block All Cookies' in Settings > Safari, then reload.";
-    if (window.__lsaStorageError) loginNotice(storageMsg);
-    // Any unexpected error shows on the page instead of silently doing nothing.
-    window.addEventListener("error", (ev) => {
-      loginNotice(
-        window.__lsaStorageError || /SecurityError|storage/i.test(ev.message || "")
-          ? storageMsg
-          : "Something went wrong (" + (ev.message || "unknown error") + "). Reload the page and try again."
-      );
-    });
-    // First-time Super Admin set-up: show the confirm box as soon as the ID is typed.
-    const idInput = document.getElementById("username");
-    idInput.addEventListener("input", () => {
-      let first = false;
-      try {
-        const su = findUserByEmail(idInput.value.trim());
-        first = !!(su && su.builtIn && su.role === SUPER_ADMIN_ROLE && !su.pwHash);
-      } catch (err) {}
-      const row = document.getElementById("confirmRow");
-      if (first && row && row.hidden) {
-        row.hidden = false;
-        loginNotice(
-          `First-time set-up: choose a password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters, type it in both boxes, then press Login.`
-        );
-      }
-    });
-
-    loginForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      loginNotice("");
-      const u = document.getElementById("username").value.trim(); // email preferred
-      const p = document.getElementById("password").value.trim();
-      if (!u || !p) return loginNotice("Enter User ID and Password");
-
-      const user = findUserByEmail(u);
-      if (user) {
-        if (user.mustChangePW) {
-          return loginNotice(
-            "First login detected. Please use the reset link sent to you to set a new password."
-          );
-        }
-        if (user.builtIn && user.role === SUPER_ADMIN_ROLE && !user.pwHash) {
-          // First login on this device: the Super Admin chooses a password.
-          const confirmRow = document.getElementById("confirmRow");
-          const confirmInput = document.getElementById("passwordConfirm");
-          if (confirmRow && confirmRow.hidden) {
-            confirmRow.hidden = false;
-            confirmInput.focus();
-            return loginNotice(
-              `First login: choose a Super Admin password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters, type it again in the new box, then press Login.`
-            );
-          }
-          if (p.length < SUPER_ADMIN_MIN_PASSWORD) {
-            return loginNotice(
-              `Password must be at least ${SUPER_ADMIN_MIN_PASSWORD} characters.`
-            );
-          }
-          if (hash(p) === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
-            return loginNotice("That is the old shared default password. Choose a different one.");
-          }
-          if ((confirmInput ? confirmInput.value.trim() : "") !== p) {
-            return loginNotice("Passwords do not match. Nothing was saved.");
-          }
-          const users = loadUsers();
-          const rec = users.find((x) => x.id === user.id);
-          if (!rec) return loginNotice("User not found.");
-          rec.pwHash = hash(p);
-          saveUsers(users);
-          user.pwHash = rec.pwHash;
-        }
-        if (user.pwHash !== hash(p)) {
-          return loginNotice("Invalid email/password.");
-        }
-        localStorage.setItem(
-          SESSION_KEY,
-          JSON.stringify({
-            user: user.name || user.email,
-            role: user.role || "BELIEVER",
-            email: user.email,
-            believerId: user.believerId || "",
-            loggedInAt: new Date().toISOString(),
-          })
-        );
-        window.location.href = "dashboard.html";
-        return;
-      }
-      loginNotice("Invalid email/password.");
-    });
-
-    // Forgot Password
-    const a = document.getElementById("lnkForgot");
-    if (a) {
-      a.addEventListener("click", async (e) => {
-        e.preventDefault();
-        const email = prompt("Enter your email to receive a reset link:");
-        if (!email) return;
-
-        const u = findUserByEmail(email);
-        // Always behave the same for privacy
-        const token = uuid();
-        const resets = loadResets();
-        resets.push({ token, email, createdAt: Date.now(), purpose: "reset" });
-        saveResets(resets);
-
-        const link = `${location.origin}${location.pathname.replace(
-          /[^/]+$/,
-          ""
-        )}reset.html?token=${encodeURIComponent(token)}`;
-
-        // Try sending email (or simulate)
-        const html = `<div style="font-family:Segoe UI,Roboto,Arial;font-size:14px;color:#111;">
-          <p>Hello,</p>
-          <p>Use the secure link below to reset your password:</p>
-          <p><a href="${link}">${link}</a></p>
-          <p>If you didn’t request it, you can ignore this message.</p>
-          <p>— LSA Treasury</p>
-        </div>`;
-        await sendMail({
-          to: email,
-          subject: "LSA Treasury — Reset Password",
-          htmlBody: html,
-        });
-      });
-    }
-  }
-
+/* =================== (2) TOP BAR & DASHBOARD =================== */
+onLsaReady(() => {
   // ---- Top bar auth banner on protected pages ----
   const needsAuth =
     document.getElementById("dashboardPage") ||
@@ -1269,54 +1009,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 });
-
-/* =================== (3) RESET PAGE (reset.html) =================== */
-function attachResetHandlers() {
-  if (location.pathname.indexOf("reset.html") === -1) return;
-  const status = document.getElementById("rpStatus");
-  const form = document.getElementById("resetForm");
-  const rp1 = document.getElementById("rp1");
-  const rp2 = document.getElementById("rp2");
-
-  const params = new URLSearchParams(location.search);
-  const token = params.get("token");
-  if (!token) {
-    status.textContent = "Missing token.";
-    return;
-  }
-
-  const resets = loadResets();
-  const rec = resets.find((r) => r.token === token);
-  if (!rec) {
-    status.textContent = "This reset link is invalid or expired.";
-    return;
-  }
-
-  status.textContent = `Resetting password for ${rec.email}`;
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    if (rp1.value !== rp2.value) return alert("Passwords do not match.");
-    if (rp1.value.length < 6) return alert("Password must be at least 6 characters.");
-
-    const users = loadUsers();
-    const u = users.find(
-      (x) => (x.email || "").toLowerCase() === rec.email.toLowerCase()
-    );
-    if (!u) return alert("User not found.");
-
-    u.pwHash = hash(rp1.value);
-    u.mustChangePW = false;
-    saveUsers(users);
-
-    const keep = resets.filter((r) => r.token !== token);
-    saveResets(keep);
-
-    alert("Password updated. You may now sign in.");
-    location.href = "index.html";
-  });
-}
-document.addEventListener("DOMContentLoaded", attachResetHandlers);
 
 /* =================== (4) BELIEVERS =================== */
 function attachBelieversHandlers() {
@@ -1454,7 +1146,7 @@ function attachBelieversHandlers() {
     URL.revokeObjectURL(url);
   });
 }
-document.addEventListener("DOMContentLoaded", attachBelieversHandlers);
+onLsaReady(attachBelieversHandlers);
 
 /* =================== (5) TRANSACTIONS (incl. Statements & Print) =================== */
 function attachTransactionsHandlers() {
@@ -2552,61 +2244,7 @@ function attachTransactionsHandlers() {
     w.document.close();
   });
 }
-document.addEventListener("DOMContentLoaded", attachTransactionsHandlers);
-
-/* =================== (6) SETTINGS =================== */
-function attachSettingsHandlers() {
-  const page = document.getElementById("settingsPage");
-  if (!page) return;
-
-  const raw = localStorage.getItem(SESSION_KEY);
-  if (!raw) {
-    window.location.href = "index.html";
-    return;
-  }
-  const s = JSON.parse(raw);
-  document.getElementById("whoami").textContent = `${s.user} (${formatRole(s.role)})`;
-  document.getElementById("logoutBtn")?.addEventListener("click", () => {
-    localStorage.removeItem(SESSION_KEY);
-    window.location.href = "index.html";
-  });
-
-  const wipe = (keys, msg) => {
-    if (!confirm(msg)) return;
-    keys.forEach((k) => localStorage.removeItem(k));
-    alert("Done.");
-  };
-
-  document.getElementById("btnWipeJournal").addEventListener("click", () => {
-    wipe([JOURNAL_KEY], "Delete ALL Journal entries? This cannot be undone.");
-  });
-  document
-    .getElementById("btnWipeContribLedger")
-    .addEventListener("click", () => {
-      wipe(
-        [CONTRIB_LEDGER_KEY],
-        "Delete ALL Contribution Ledger rows (affects Statements)?"
-      );
-    });
-  document.getElementById("btnWipeCashflow").addEventListener("click", () => {
-    wipe([CASHFLOW_KEY], "Delete ALL Cash Flow rows?");
-  });
-
-  document.getElementById("btnFactoryReset").addEventListener("click", () => {
-    wipe(
-      [JOURNAL_KEY, CONTRIB_LEDGER_KEY, CASHFLOW_KEY],
-      "Factory Reset: clear Journal, Statements, and Cash Flow? Funds/COA/Believers remain."
-    );
-  });
-
-  document.getElementById("btnNuclearReset").addEventListener("click", () => {
-    wipe(
-      [JOURNAL_KEY, CONTRIB_LEDGER_KEY, CASHFLOW_KEY, COA_KEY, FUNDS_KEY, BELIEVERS_KEY],
-      "NUCLEAR RESET: clear EVERYTHING including Funds, Chart of Accounts, and Believers?"
-    );
-  });
-}
-document.addEventListener("DOMContentLoaded", attachSettingsHandlers);
+onLsaReady(attachTransactionsHandlers);
 
 /* =================== (7) ADJUSTMENTS & OPENING BALANCES =================== */
 function attachAdjustmentsHandlers() {
@@ -2929,7 +2567,7 @@ function attachAdjustmentsHandlers() {
     alert("Adjustment posted.");
   });
 }
-document.addEventListener("DOMContentLoaded", attachAdjustmentsHandlers);
+onLsaReady(attachAdjustmentsHandlers);
 
 /* =================== (8) REPORTS: TB / CF / IS / BS =================== */
 function attachReportsHandlers() {
@@ -3872,7 +3510,7 @@ function attachReportsHandlers() {
 
   runTB();
 }
-document.addEventListener("DOMContentLoaded", attachReportsHandlers);
+onLsaReady(attachReportsHandlers);
 
 /* =================== (9) FUNDS & COA =================== */
 function renderFundsTable() {
@@ -4000,7 +3638,7 @@ function attachFundsHandlers() {
     alert("Defaults ensured and missing accounts repaired.");
   });
 }
-document.addEventListener("DOMContentLoaded", attachFundsHandlers);
+onLsaReady(attachFundsHandlers);
 
 
 /* =================== (10) POSTING RULES BUILDER =================== */
@@ -4746,194 +4384,10 @@ function attachPostingRulesHandlers() {
   updateCreateButton();
 }
 
-document.addEventListener("DOMContentLoaded", attachPostingRulesHandlers);
-/* =================== (11) USERS (Admin: create user + reset link) =================== */
-function attachUsersHandlers() {
-  const sec = document.getElementById("usersSection");
-  if (!sec) return;
-
-  const uRole = document.getElementById("uRole");
-  const uBelieverRow = document.getElementById("uBelieverRow");
-  uRole.addEventListener("change", () => {
-    uBelieverRow.style.display = uRole.value === "BELIEVER" ? "" : "none";
-  });
-
-  const tblBody = document.querySelector("#usersTable tbody");
-  function renderUsers() {
-    const list = loadUsers();
-    tblBody.innerHTML = "";
-    list.forEach((u) => {
-      const tr = document.createElement("tr");
-      const rawRole = u.role || "";
-      const roleLabel = formatRole(rawRole);
-      const protectedNote = u.builtIn ? " (protected)" : "";
-      const deleteAttrs = u.builtIn
-        ? `class="rowbtn danger" data-act="del" data-id="${u.id}" disabled title="The Super Admin account cannot be deleted."`
-        : `class="rowbtn danger" data-act="del" data-id="${u.id}"`;
-      tr.innerHTML = `
-        <td>${u.name || ""}</td>
-        <td>${u.email || ""}</td>
-        <td>${roleLabel}${protectedNote}</td>
-        <td>${u.believerId || ""}</td>
-        <td>${u.mustChangePW ? "Yes" : "No"}</td>
-        <td>
-          <button class="rowbtn" data-act="reset" data-id="${u.id}">Reset Link</button>
-          <button ${deleteAttrs}>Delete</button>
-        </td>
-      `;
-      tblBody.appendChild(tr);
-    });
-  }
-  renderUsers();
-
-  document.getElementById("btnCreateUser").addEventListener("click", async () => {
-    const name = (document.getElementById("uName").value || "").trim();
-    const email = (document.getElementById("uEmail").value || "").trim();
-    const role = document.getElementById("uRole").value;
-    const believerId = (document.getElementById("uBelieverId").value || "").trim();
-
-    if (!name || !email) return alert("Enter name and email.");
-    if (findUserByEmail(email)) return alert("A user with that email already exists.");
-
-    const tempPW = Math.random().toString(36).slice(-10);
-    const id = uuid();
-
-    const users = loadUsers();
-    users.push({
-      id,
-      name,
-      email,
-      role,
-      believerId: role === "BELIEVER" ? believerId : "",
-      pwHash: hash(tempPW),
-      mustChangePW: true,
-      createdAt: new Date().toISOString(),
-    });
-    saveUsers(users);
-
-    const token = uuid();
-    const resets = loadResets();
-    resets.push({ token, email, createdAt: Date.now(), purpose: "activation" });
-    saveResets(resets);
-
-    const link = `${location.origin}${location.pathname.replace(
-      /[^/]+$/,
-      ""
-    )}reset.html?token=${encodeURIComponent(token)}`;
-
-    const html = `
-      <div style="font-family:Segoe UI,Roboto,Arial;font-size:14px;color:#111;">
-        <p>Dear ${name},</p>
-        <p>Your LSA Treasury access has been created.</p>
-        <p><b>Temporary password:</b> ${tempPW}</p>
-        <p>To set your own password, click the secure link below:</p>
-        <p><a href="${link}">${link}</a></p>
-        <p>If you didn’t expect this message, you can ignore it.</p>
-        <p>— LSA Treasury</p>
-      </div>
-    `;
-
-    const ok = await sendMail({
-      to: email,
-      subject: "Your LSA Treasury access",
-      htmlBody: html,
-    });
-    if (ok) alert("User created and email sent.");
-    renderUsers();
-  });
-
-  document.getElementById("btnResetLink").addEventListener("click", async () => {
-    const email = prompt("Send reset link to which email?");
-    if (!email) return;
-    const u = findUserByEmail(email);
-    if (!u) return alert("No user with that email.");
-
-    const token = uuid();
-    const resets = loadResets();
-    resets.push({ token, email: u.email, createdAt: Date.now(), purpose: "reset" });
-    saveResets(resets);
-    const link = `${location.origin}${location.pathname.replace(
-      /[^/]+$/,
-      ""
-    )}reset.html?token=${encodeURIComponent(token)}`;
-
-    const html = `
-      <div style="font-family:Segoe UI,Roboto,Arial;font-size:14px;color:#111;">
-        <p>Hello ${u.name || ""},</p>
-        <p>Use the secure link below to reset your password:</p>
-        <p><a href="${link}">${link}</a></p>
-        <p>This link will expire after a short time. If you didn’t request it, ignore this message.</p>
-        <p>— LSA Treasury</p>
-      </div>
-    `;
-    const ok = await sendMail({
-      to: email,
-      subject: "LSA Treasury — Reset Password",
-      htmlBody: html,
-    });
-    if (ok) alert("Reset link sent.");
-  });
-
-  document.getElementById("usersTable").addEventListener("click", async (e) => {
-    const b = e.target.closest("button");
-    if (!b) return;
-    const act = b.dataset.act,
-      id = b.dataset.id;
-    const users = loadUsers();
-    const u = users.find((x) => x.id === id);
-    if (!u) return;
-
-    if (act === "del") {
-      if (u.builtIn) {
-        alert("The Super Admin account cannot be deleted.");
-        return;
-      }
-      if (!confirm(`Delete user ${u.name}?`)) return;
-      const keep = users.filter((x) => x.id !== id);
-      saveUsers(keep);
-      renderUsers();
-      return;
-    }
-
-    if (act === "reset") {
-      const token = uuid();
-      const resets = loadResets();
-      resets.push({ token, email: u.email, createdAt: Date.now(), purpose: "reset" });
-      saveResets(resets);
-      const link = `${location.origin}${location.pathname.replace(
-        /[^/]+$/,
-        ""
-      )}reset.html?token=${encodeURIComponent(token)}`;
-      const html = `
-        <div style="font-family:Segoe UI,Roboto,Arial;font-size:14px;color:#111;">
-          <p>Hello ${u.name || ""},</p>
-          <p>Use the secure link below to reset your password:</p>
-          <p><a href="${link}">${link}</a></p>
-          <p>This link will expire after a short time. If you didn’t request it, ignore this message.</p>
-          <p>— LSA Treasury</p>
-        </div>
-      `;
-      const ok = await sendMail({
-        to: u.email,
-        subject: "LSA Treasury — Reset Password",
-        htmlBody: html,
-      });
-      if (ok) alert("Reset link sent.");
-    }
-  });
-}
-document.addEventListener("DOMContentLoaded", attachUsersHandlers);
-
-/* =================== Installable app (PWA) =================== */
-if (typeof window !== "undefined" && typeof navigator !== "undefined" && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
-  });
-}
-
+onLsaReady(attachPostingRulesHandlers);
 /* Mobile menu: keep the current page visible in the swipeable bar */
 if (typeof document !== "undefined") {
-  document.addEventListener("DOMContentLoaded", () => {
+  onLsaReady(() => {
     const cur = document.querySelector(".side .navlink.active");
     if (cur && cur.scrollIntoView) {
       try { cur.scrollIntoView({ inline: "center", block: "nearest" }); } catch (e) {}

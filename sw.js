@@ -1,11 +1,12 @@
 // Service worker: makes the app installable and lets the screens open quickly.
 // Financial data is never cached here; it always comes live from the server.
-const CACHE = "lsa-shell-v2";
+const CACHE = "lsa-shell-v3";
 const SHELL = [
   "index.html", "dashboard.html", "believers.html", "funds.html",
   "transactions.html", "adjustments.html", "reports.html",
-  "posting-rules.html", "settings.html", "reset.html",
-  "style.css", "app.js", "manifest.webmanifest",
+  "posting-rules.html", "settings.html", "officer.html",
+  "style.css", "app.js", "boot.js", "cloud.js", "login.js", "settings.js",
+  "officer.js", "publish.js", "firebase-config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png",
 ];
 

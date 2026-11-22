@@ -45,13 +45,14 @@ service cloud.firestore {
     function isTreasurer() { return active() && me().role == 'TREASURER'; }
 
     // The write must be accompanied by a new audit entry, created in the same
-    // batch, by the same person, naming this exact record.
+    // request, by the same person, naming this exact record. The entry's time must
+    // equal this request's time, so an older entry can never be reused.
+    // (One look-up per record: a batch is limited to 20 look-ups in total.)
     function audited(aid, target) {
       return aid is string
-        && !exists(auditPath(aid))
-        && existsAfter(auditPath(aid))
         && getAfter(auditPath(aid)).data.target == target
-        && getAfter(auditPath(aid)).data.actor == request.auth.uid;
+        && getAfter(auditPath(aid)).data.actor == request.auth.uid
+        && getAfter(auditPath(aid)).data.at == request.time;
     }
 
     function validUser(d) {
@@ -77,6 +78,17 @@ service cloud.firestore {
         && request.resource.data.at == request.time
         && getAfter(userPath(request.auth.uid)).data.role == 'TREASURER';
       allow update, delete: if false;
+    }
+
+    // ---------- change counter (lets a device skip re-reading unchanged books) ----------
+    match /system/meta {
+      allow read: if isManager();
+      allow create, update: if isManager()
+        && request.resource.data.keys().hasOnly(['v', 'updatedAt', 'updatedBy'])
+        && request.resource.data.v is int
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
     }
 
     // ---------- users ----------
@@ -140,6 +152,22 @@ service cloud.firestore {
         && request.resource.data.publishedBy == request.auth.uid
         && request.resource.data.publishedAt == request.time
         && audited(request.resource.data.auditId, 'reports/' + id);
+      allow delete: if false;
+    }
+
+    // ---------- index of published reports (one small document per type) ----------
+    // Officers fetch the index for the report types ticked for them, then the
+    // reports it lists. Queries over /reports are never needed.
+    match /reportIndex/{rtype} {
+      allow read: if isManager() || (active() && rtype in me().reports);
+      allow create, update: if isManager() && rtype in reportTypes()
+        && request.resource.data.keys().hasOnly(['type', 'items', 'auditId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.type == rtype
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 500
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && audited(request.resource.data.auditId, 'reportIndex/' + rtype);
       allow delete: if false;
     }
 
