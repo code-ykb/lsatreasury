@@ -1,6 +1,6 @@
 // Service worker: makes the app installable and lets the screens open quickly.
 // Financial data is never cached here; it always comes live from the server.
-const CACHE = "lsa-shell-v1";
+const CACHE = "lsa-shell-v2";
 const SHELL = [
   "index.html", "dashboard.html", "believers.html", "funds.html",
   "transactions.html", "adjustments.html", "reports.html",
@@ -27,7 +27,9 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // "no-cache" asks the server whether the file changed every time, so a new
+    // release shows up at once instead of after the browser's own cache expires.
+    fetch(e.request, { cache: "no-cache" })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
