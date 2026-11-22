@@ -41,6 +41,11 @@
           <label for="password">Password</label>
           <input id="password" type="password" autocomplete="current-password" />
         </div>
+        <div class="form-row" id="confirmRow" hidden>
+          <label for="passwordConfirm">Confirm new password</label>
+          <input id="passwordConfirm" type="password" autocomplete="new-password" />
+        </div>
+        <p id="loginMsg" role="alert" style="margin:8px 0;font-size:14px;font-weight:600;"></p>
         <button class="btn-primary" type="submit">LOGIN</button>
         <div class="help-links">
   <a href="#" id="lnkForgot">Forgot Password?</a>

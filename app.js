@@ -1068,49 +1068,57 @@ document.addEventListener("DOMContentLoaded", () => {
   // ---- Login ----
   const loginForm = document.getElementById("loginForm");
   if (loginForm) {
+    // Show login messages on the page (pop-up dialogs are blocked in some viewers).
+    const loginNotice = (msg) => {
+      const el = document.getElementById("loginMsg");
+      if (el) el.textContent = msg;
+      else alert(msg);
+    };
+
     loginForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const u = document.getElementById("username").value.trim(); // email preferred
       const p = document.getElementById("password").value.trim();
-      if (!u || !p) return alert("Enter User ID and Password");
+      if (!u || !p) return loginNotice("Enter User ID and Password");
 
       const user = findUserByEmail(u);
       if (user) {
         if (user.mustChangePW) {
-          alert(
+          return loginNotice(
             "First login detected. Please use the reset link sent to you to set a new password."
           );
-          return;
         }
         if (user.builtIn && user.role === SUPER_ADMIN_ROLE && !user.pwHash) {
           // First login on this device: the Super Admin chooses a password.
-          if (p.length < SUPER_ADMIN_MIN_PASSWORD) {
-            alert(
-              `Set a Super Admin password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters. Enter it in the Password field and press Login.`
+          const confirmRow = document.getElementById("confirmRow");
+          const confirmInput = document.getElementById("passwordConfirm");
+          if (confirmRow && confirmRow.hidden) {
+            confirmRow.hidden = false;
+            confirmInput.focus();
+            return loginNotice(
+              `First login: choose a Super Admin password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters, type it again in the new box, then press Login.`
             );
-            return;
+          }
+          if (p.length < SUPER_ADMIN_MIN_PASSWORD) {
+            return loginNotice(
+              `Password must be at least ${SUPER_ADMIN_MIN_PASSWORD} characters.`
+            );
           }
           if (hash(p) === LEGACY_SUPER_ADMIN_PASSWORD_HASH) {
-            alert("That is the old shared default password. Choose a different one.");
-            return;
+            return loginNotice("That is the old shared default password. Choose a different one.");
           }
-          const confirmPw = window.prompt("Confirm the new Super Admin password:");
-          if (confirmPw === null) return;
-          if (confirmPw.trim() !== p) {
-            alert("Passwords do not match. Nothing was saved.");
-            return;
+          if ((confirmInput ? confirmInput.value.trim() : "") !== p) {
+            return loginNotice("Passwords do not match. Nothing was saved.");
           }
           const users = loadUsers();
           const rec = users.find((x) => x.id === user.id);
-          if (!rec) return alert("User not found.");
+          if (!rec) return loginNotice("User not found.");
           rec.pwHash = hash(p);
           saveUsers(users);
           user.pwHash = rec.pwHash;
-          alert("Super Admin password set. Keep it safe; it cannot be recovered.");
         }
         if (user.pwHash !== hash(p)) {
-          alert("Invalid email/password.");
-          return;
+          return loginNotice("Invalid email/password.");
         }
         localStorage.setItem(
           SESSION_KEY,
@@ -1125,7 +1133,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "dashboard.html";
         return;
       }
-      alert("Invalid email/password.");
+      loginNotice("Invalid email/password.");
     });
 
     // Forgot Password
