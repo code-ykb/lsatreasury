@@ -4,11 +4,15 @@
   "description": "LSA Treasury static app",
   "scripts": {
     "test": "node tests/seed.test.js && node tests/delete.test.js && node tests/dashboard.test.js",
-    "test:rules": "firebase emulators:exec --only firestore --project lsa-treasury-test \"node tests/rules.test.mjs\""
+    "test:rules": "firebase emulators:exec --only firestore --project lsa-treasury-test \"node tests/rules.test.mjs\"",
+    "test:e2e:build": "esbuild tests/e2e/fb-entry.js --bundle --format=esm --platform=browser --outfile=tests/e2e/.fb-all.js",
+    "test:e2e": "npm run test:e2e:build && firebase emulators:exec --only auth,firestore --project lsa-treasury \"node tests/e2e/online.e2e.js\""
   },
   "devDependencies": {
-    "firebase-tools": "^15.37.0",
     "@firebase/rules-unit-testing": "^5.0.2",
-    "firebase": "^12.19.0"
+    "esbuild": "^0.28.2",
+    "firebase": "^12.19.0",
+    "firebase-tools": "^15.37.0",
+    "xlsx": "^0.18.5"
   }
 }

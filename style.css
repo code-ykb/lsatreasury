@@ -1524,6 +1524,35 @@ html {
     flex-wrap: wrap;
   }
 
+  /* People and published-report lists become cards, so no buttons sit off-screen */
+  #usersTable,
+  #publishedTable {
+    min-width: 0;
+  }
+  #usersTable thead,
+  #publishedTable thead {
+    display: none;
+  }
+  #usersTable tr,
+  #publishedTable tr {
+    display: block;
+    padding: 12px 4px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  }
+  #usersTable td,
+  #publishedTable td {
+    display: block;
+    padding: 3px 12px;
+    border: 0;
+    white-space: normal;
+  }
+  #usersTable td[data-label]::before,
+  #publishedTable td[data-label]::before {
+    content: attr(data-label) ": ";
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
   /* Dialogs fit the screen */
   .modal {
     width: calc(100vw - 24px);
@@ -1541,4 +1570,91 @@ html {
   .tile {
     padding: 16px 14px;
   }
+}
+
+/* =================== Online: loading, status, people =================== */
+html.lsa-loading body > *:not(#lsaOverlay) {
+  visibility: hidden;
+}
+#lsaOverlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg, #eef2f8);
+  z-index: 1000;
+  padding: 16px;
+}
+.lsa-box {
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  padding: 24px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+.lsa-box h3 {
+  margin-top: 0;
+}
+#lsaSync {
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  z-index: 900;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e6f6ec;
+  color: #14532d;
+  border: 1px solid #b7e4c7;
+}
+#lsaSync[data-state="saving"] {
+  background: #eaf1ff;
+  color: #1e3a8a;
+  border-color: #bcd0ff;
+}
+#lsaSync[data-state="failed"] {
+  background: #fdecec;
+  color: #7f1d1d;
+  border-color: #f5b5b5;
+}
+.checks {
+  display: grid;
+  gap: 8px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-weight: 500;
+}
+.check input {
+  width: 22px;
+  height: 22px;
+}
+.msg-ok:not(:empty),
+.msg-bad:not(:empty) {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+.msg-ok:not(:empty) {
+  background: #e6f6ec;
+  color: #14532d;
+}
+.msg-bad:not(:empty) {
+  background: #fdecec;
+  color: #7f1d1d;
+}
+td.actions {
+  white-space: nowrap;
+}
+td.actions .rowbtn {
+  margin: 2px 4px 2px 0;
+}
+.rowbtn:disabled {
+  opacity: 0.45;
 }

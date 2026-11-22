@@ -2,3 +2,4 @@ node_modules/
 .firebase/
 *-debug.log
 firestore-debug.log
+tests/e2e/.fb-all.js

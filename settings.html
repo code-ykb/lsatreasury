@@ -39,79 +39,97 @@
 
     <main class="main">
       <h2>Settings</h2>
+      <p id="stMsg" role="status"></p>
 
-      <div class="card" style="border-color:#dc2626">
-        <h3 style="margin-top:0">Danger Zone</h3>
-        <p style="color:#6b7280">Delete data stored in your browser for this app. This cannot be undone.</p>
-
-        <div style="display:grid; gap:10px; max-width:620px;">
-          <button id="btnWipeJournal" class="btn-secondary" style="border-color:#dc2626">
-            <i class="fa-solid fa-broom"></i> Delete Journal entries only
-          </button>
-
-          <button id="btnWipeContribLedger" class="btn-secondary" style="border-color:#dc2626">
-            <i class="fa-solid fa-broom"></i> Delete Contribution Ledger (statements) only
-          </button>
-
-          <button id="btnWipeCashflow" class="btn-secondary" style="border-color:#dc2626">
-            <i class="fa-solid fa-broom"></i> Delete Cash Flow only
-          </button>
-
-          <button id="btnFactoryReset" class="btn-primary" style="background:#dc2626">
-            <i class="fa-solid fa-triangle-exclamation"></i> Factory Reset (clear Journal, Statements, Cash Flow)
-          </button>
-
-          <button id="btnNuclearReset" class="btn-primary" style="background:#7f1d1d">
-            <i class="fa-solid fa-skull-crossbones"></i> Nuclear Reset (clear EVERYTHING incl. Funds, COA, Believers)
-          </button>
+      <section class="card" id="peopleCard">
+        <h3 style="margin-top:0">People with access</h3>
+        <p class="micro">The Treasurer and Vice Treasurer can enter data and see everything. Everyone else can only see the reports you tick for them. Believers do not sign in.</p>
+        <div class="table-wrap">
+          <table class="table" id="usersTable">
+            <thead><tr><th>Name</th><th>Role</th><th>Reports</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
         </div>
-      </div>
-      <!-- Users (Admin) -->
-<section class="card" id="usersSection">
-  <h3 style="margin-top:0;">Users</h3>
-  <div class="grid2">
-    <div class="form-row">
-      <label>Full Name</label>
-      <input id="uName" type="text" placeholder="e.g. John Doe" />
-    </div>
-    <div class="form-row">
-      <label>Email</label>
-      <input id="uEmail" type="email" placeholder="name@example.com" />
-    </div>
-    <div class="form-row">
-      <label>Role</label>
-      <select id="uRole">
-        <option value="ADMIN">Admin — Treasurer/Vice Treasurer</option>
-        <option value="LSA_MEMBER">LSA Member</option>
-        <option value="BELIEVER">Believer</option>
-      </select>
-    </div>
-    <div class="form-row" id="uBelieverRow" style="display:none;">
-      <label>Believer ID (link to statement)</label>
-      <input id="uBelieverId" type="text" placeholder="If role=Believer" />
-    </div>
-  </div>
+      </section>
 
-  <div style="display:flex; gap:8px; margin-top:8px;">
-    <button class="btn-primary" id="btnCreateUser"><i class="fa-solid fa-user-plus"></i> Create User</button>
-    <button class="btn-secondary" id="btnResetLink"><i class="fa-solid fa-key"></i> Send Reset Link</button>
-  </div>
+      <section class="card" id="personCard">
+        <h3 style="margin-top:0" id="personTitle">Add a person</h3>
+        <form id="personForm">
+          <input type="hidden" id="pUid" />
+          <div class="form-row">
+            <label for="pName">Full name</label>
+            <input id="pName" type="text" autocomplete="off" placeholder="e.g. John Doe" />
+          </div>
+          <div class="form-row">
+            <label for="pEmail">Email</label>
+            <input id="pEmail" type="email" autocomplete="off" inputmode="email" autocapitalize="none" placeholder="name@example.com" />
+          </div>
+          <div class="form-row">
+            <label for="pRole">Role</label>
+            <select id="pRole"></select>
+          </div>
+          <div class="form-row" id="pReportsRow">
+            <label>Reports this person may see</label>
+            <div class="checks" id="pReports"></div>
+          </div>
+          <div class="btn-group">
+            <button class="btn-primary" id="btnPerson" type="submit">Add person</button>
+            <button class="btn-secondary" id="btnPersonCancel" type="button" hidden>Cancel</button>
+          </div>
+          <p class="micro" id="pHint">A new person gets an email from Firebase with a link to choose their own password.</p>
+        </form>
+      </section>
 
-  <div style="margin-top:14px;">
-    <h4 style="margin:0 0 6px 0;">Existing Users</h4>
-    <div class="table-wrap">
-      <table class="table" id="usersTable">
-        <thead>
-          <tr><th>Name</th><th>Email</th><th>Role</th><th>BelieverID</th><th>Must Change PW</th><th>Actions</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
-</section>
+      <section class="card" id="handoverCard" hidden>
+        <h3 style="margin-top:0">Hand over the Treasurer role</h3>
+        <p class="micro">You become Vice Treasurer and the person you choose becomes Treasurer, in one step. Only the Treasurer can do this.</p>
+        <div class="form-row">
+          <label for="hoPerson">New Treasurer</label>
+          <select id="hoPerson"></select>
+        </div>
+        <div class="btn-group">
+          <button class="btn-secondary" id="btnHandover" type="button">Hand over</button>
+          <button class="btn-primary" id="btnHandoverYes" type="button" hidden>Yes, hand over now</button>
+        </div>
+      </section>
+
+      <section class="card" id="publishedCard">
+        <h3 style="margin-top:0">Reports shared with officers</h3>
+        <p class="micro">Publish a report from the Reports page. Withdrawing removes it from officers' lists; the published copy stays on record.</p>
+        <div class="table-wrap">
+          <table class="table" id="publishedTable">
+            <thead><tr><th>Report</th><th>Period</th><th>Published</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3 style="margin-top:0">Backup</h3>
+        <p class="micro">Downloads everything entered so far as an Excel file, one sheet per record type. Do this every month and keep the file somewhere safe.</p>
+        <div class="btn-group"><button class="btn-primary" id="btnBackup" type="button">Download Excel backup</button></div>
+      </section>
+
+      <section class="card">
+        <h3 style="margin-top:0">Audit log</h3>
+        <p class="micro">Every change, with who made it and when. It cannot be edited or deleted.</p>
+        <div class="table-wrap">
+          <table class="table" id="auditTable">
+            <thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="btn-group" style="margin-top:12px"><button class="btn-secondary" id="btnAuditMore" type="button">Show more</button></div>
+      </section>
+
+      <section class="card">
+        <h3 style="margin-top:0">My account</h3>
+        <div class="btn-group"><button class="btn-secondary" id="btnMyReset" type="button">Email me a link to change my password</button></div>
+      </section>
     </main>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="boot.js"></script>
+  <script type="module" src="settings.js"></script>
 </body>
 </html>

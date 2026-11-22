@@ -246,6 +246,43 @@ await test("officers cannot publish reports", async () => {
   await assertFails(auditedBatch("dave", [{ path: "reports/r-x", data: report("dave", "TB") }]).commit());
 });
 
+// ---------------- report index ----------------
+await test("Treasurer writes the report index; officer reads only ticked types", async () => {
+  const idx = (actor, type) => ({
+    type,
+    items: [{ id: "r-" + type.toLowerCase(), title: type, period: "2026-10", at: 1 }],
+    updatedAt: serverTimestamp(),
+    updatedBy: actor,
+  });
+  const put = (actor, type) => auditedBatch(actor, [{ path: "reportIndex/" + type, data: idx(actor, type) }]).commit();
+  await assertSucceeds(put("alice", "TB"));
+  await assertSucceeds(put("alice", "BS"));
+  await assertSucceeds(getDoc(doc(db("eve"), "reportIndex/BS"))); // eve: BS
+  await assertFails(getDoc(doc(db("eve"), "reportIndex/TB")));
+});
+
+await test("officers cannot write the report index; index needs an audit entry", async () => {
+  const bad = { type: "TB", items: [], updatedAt: serverTimestamp(), updatedBy: "eve" };
+  await assertFails(auditedBatch("eve", [{ path: "reportIndex/TB", data: bad }]).commit());
+  await assertFails(
+    auditedBatch("alice", [{ path: "reportIndex/IS", data: { ...bad, type: "IS", updatedBy: "alice" } }], { skipAudit: true }).commit()
+  );
+  await assertFails(
+    auditedBatch("alice", [{ path: "reportIndex/NOPE", data: { ...bad, type: "NOPE", updatedBy: "alice" } }]).commit()
+  );
+});
+
+// ---------------- change counter ----------------
+await test("managers can read and bump the change counter; officers cannot", async () => {
+  const bump = (actor, v) => setDoc(doc(db(actor), "system/meta"), { v, updatedAt: serverTimestamp(), updatedBy: actor });
+  await assertSucceeds(bump("alice", 1));
+  await assertSucceeds(bump("carol", 2));
+  await assertSucceeds(getDoc(doc(db("carol"), "system/meta")));
+  await assertFails(bump("eve", 3));
+  await assertFails(getDoc(doc(db("eve"), "system/meta")));
+  await assertFails(setDoc(doc(db("alice"), "system/meta"), { v: "x", updatedAt: serverTimestamp(), updatedBy: "alice" }));
+});
+
 // ---------------- audit log ----------------
 await test("audit log cannot be changed or deleted, even by the Treasurer", async () => {
   await assertFails(updateDoc(doc(db("alice"), "audit/a1"), { summary: "edited" }));

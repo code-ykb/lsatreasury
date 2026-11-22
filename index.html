@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LSA Treasury System | Login</title>
+  <title>LSA Treasury System | Sign in</title>
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#1d4ed8">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -31,28 +31,47 @@
   <div class="section">
     <!-- Left: Login -->
     <div class="card">
-      <h3>Login</h3>
+      <h3 id="loginTitle">Sign in</h3>
       <form id="loginForm">
         <div class="form-row">
-          <label for="username">User ID</label>
-          <input id="username" type="text" autocomplete="username" />
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" />
         </div>
         <div class="form-row">
           <label for="password">Password</label>
           <input id="password" type="password" autocomplete="current-password" />
         </div>
-        <div class="form-row" id="confirmRow" hidden>
-          <label for="passwordConfirm">Confirm new password</label>
-          <input id="passwordConfirm" type="password" autocomplete="new-password" />
-        </div>
-        <p id="loginMsg" role="alert"></p>
-        <button class="btn-primary" type="submit">LOGIN</button>
+        <button class="btn-primary" id="btnLogin" type="submit">LOGIN</button>
         <div class="help-links">
-  <a href="#" id="lnkForgot">Forgot Password?</a>
-  &nbsp; | &nbsp;
-  <a href="#">Can't Login?</a> &nbsp; (Account Locked)
-</div>
+          <a href="#" id="lnkForgot">Forgot password?</a>
+          &nbsp; | &nbsp;
+          <a href="#" id="lnkSetup">First-time set-up (Treasurer)</a>
+        </div>
       </form>
+
+      <form id="setupForm" hidden>
+        <p class="micro">Only the person setting the system up for the first time uses this. They become the Treasurer. It works once.</p>
+        <div class="form-row">
+          <label for="sName">Full name</label>
+          <input id="sName" type="text" autocomplete="name" />
+        </div>
+        <div class="form-row">
+          <label for="sEmail">Email</label>
+          <input id="sEmail" type="email" autocomplete="username" inputmode="email" autocapitalize="none" />
+        </div>
+        <div class="form-row">
+          <label for="sPass">Choose a password (8 characters or more)</label>
+          <input id="sPass" type="password" autocomplete="new-password" />
+        </div>
+        <div class="form-row">
+          <label for="sPass2">Type the password again</label>
+          <input id="sPass2" type="password" autocomplete="new-password" />
+        </div>
+        <button class="btn-primary" id="btnSetup" type="submit">CREATE TREASURER ACCOUNT</button>
+        <div class="help-links"><a href="#" id="lnkBack">Back to sign in</a></div>
+      </form>
+
+      <p id="loginMsg" role="alert"></p>
     </div>
 
     <!-- Right: Information / announcement -->
@@ -71,6 +90,6 @@
     <p>Use strong passwords. Do not share credentials. Log out after each session.</p>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="login.js"></script>
 </body>
 </html>

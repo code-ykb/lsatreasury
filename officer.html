@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LSA Treasury | Reports</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1d4ed8">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+</head>
+<body id="officerPage">
+  <div class="topbar">
+    <div class="brand-mark">LSA</div>
+    <div class="brand-title">Treasury — Reports</div>
+    <div class="topbar-meta">
+      <span class="chip small">Currency: MUR (Rs)</span>
+      <span>Signed in as <strong id="whoami"></strong></span>
+    </div>
+  </div>
+
+  <div class="dash-wrap">
+    <aside class="side">
+      <nav>
+        <a class="navlink active" href="officer.html" aria-current="page"><i class="fa-solid fa-chart-line"></i> Reports</a>
+        <button class="btn-logout" id="logoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <h2>Reports</h2>
+      <section class="card">
+        <p class="micro">These are the reports the Treasurer has shared with you. They are copies published at a point in time.</p>
+        <div class="form-row">
+          <label for="repPick">Choose a report</label>
+          <select id="repPick"></select>
+        </div>
+        <p id="repMsg" class="micro"></p>
+      </section>
+      <section class="card" id="repCard" hidden>
+        <h3 id="repTitle" style="margin-top:0"></h3>
+        <div id="repMeta" class="micro" style="margin-bottom:8px"></div>
+        <div class="table-wrap" id="repView"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="boot.js"></script>
+  <script type="module" src="officer.js"></script>
+</body>
+</html>
