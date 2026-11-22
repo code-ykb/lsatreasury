@@ -1367,3 +1367,16 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+#loginMsg {
+  margin: 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#loginMsg:not(:empty) {
+  background: #eaf1ff;
+  border: 1px solid #bcd0ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+}

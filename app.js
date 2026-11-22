@@ -622,7 +622,7 @@ function ensureSuperAdminAccount() {
   if (mutated) saveUsers(users);
 }
 
-ensureSuperAdminAccount();
+try { ensureSuperAdminAccount(); } catch (e) { window.__lsaStorageError = e; }
 
 if (typeof window !== "undefined") {
   window.__lsaAuth = Object.assign({}, window.__lsaAuth, {
@@ -1009,9 +1009,9 @@ const syncTaggedEntryCollections = () => {
   }
 };
 
-syncTaggedEntryCollections();
+try { syncTaggedEntryCollections(); } catch (e) { window.__lsaStorageError = e; }
 
-ensureCashflowIntegrity();
+try { ensureCashflowIntegrity(); } catch (e) { window.__lsaStorageError = e; }
 
 if (typeof window !== "undefined") {
   window.__lsaTagged = Object.assign({}, window.__lsaTagged, {
@@ -1075,8 +1075,38 @@ document.addEventListener("DOMContentLoaded", () => {
       else alert(msg);
     };
 
+    // Storage blocked (private browsing, "block all cookies"): say so on the page.
+    const storageMsg =
+      "This browser is blocking storage for this site, so login cannot work. Turn off Private Browsing or 'Block All Cookies' in Settings > Safari, then reload.";
+    if (window.__lsaStorageError) loginNotice(storageMsg);
+    // Any unexpected error shows on the page instead of silently doing nothing.
+    window.addEventListener("error", (ev) => {
+      loginNotice(
+        window.__lsaStorageError || /SecurityError|storage/i.test(ev.message || "")
+          ? storageMsg
+          : "Something went wrong (" + (ev.message || "unknown error") + "). Reload the page and try again."
+      );
+    });
+    // First-time Super Admin set-up: show the confirm box as soon as the ID is typed.
+    const idInput = document.getElementById("username");
+    idInput.addEventListener("input", () => {
+      let first = false;
+      try {
+        const su = findUserByEmail(idInput.value.trim());
+        first = !!(su && su.builtIn && su.role === SUPER_ADMIN_ROLE && !su.pwHash);
+      } catch (err) {}
+      const row = document.getElementById("confirmRow");
+      if (first && row && row.hidden) {
+        row.hidden = false;
+        loginNotice(
+          `First-time set-up: choose a password of at least ${SUPER_ADMIN_MIN_PASSWORD} characters, type it in both boxes, then press Login.`
+        );
+      }
+    });
+
     loginForm.addEventListener("submit", (e) => {
       e.preventDefault();
+      loginNotice("");
       const u = document.getElementById("username").value.trim(); // email preferred
       const p = document.getElementById("password").value.trim();
       if (!u || !p) return loginNotice("Enter User ID and Password");
